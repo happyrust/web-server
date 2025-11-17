@@ -161,4 +161,52 @@ impl ApiClient {
         let topology: TopologyData = response.json().await?;
         Ok(topology)
     }
+    
+    // Task management API
+    pub async fn create_task(&self, task: &serde_json::Value) -> Result<String> {
+        let url = format!("{}/api/tasks", self.base_url);
+        let response = self.client.post(&url).json(task).send().await?;
+        let result: serde_json::Value = response.json().await?;
+        Ok(result["id"].as_str().unwrap_or("").to_string())
+    }
+    
+    pub async fn get_tasks(&self) -> Result<Vec<serde_json::Value>> {
+        let url = format!("{}/api/tasks", self.base_url);
+        let response = self.client.get(&url).send().await?;
+        let tasks: Vec<serde_json::Value> = response.json().await?;
+        Ok(tasks)
+    }
+    
+    pub async fn cancel_task(&self, id: &str) -> Result<()> {
+        let url = format!("{}/api/tasks/{}/cancel", self.base_url, id);
+        self.client.post(&url).send().await?;
+        Ok(())
+    }
+    
+    pub async fn delete_task(&self, id: &str) -> Result<()> {
+        let url = format!("{}/api/tasks/{}", self.base_url, id);
+        self.client.delete(&url).send().await?;
+        Ok(())
+    }
+    
+    // Task template API
+    pub async fn get_task_templates(&self) -> Result<Vec<serde_json::Value>> {
+        let url = format!("{}/api/task-templates", self.base_url);
+        let response = self.client.get(&url).send().await?;
+        let templates: Vec<serde_json::Value> = response.json().await?;
+        Ok(templates)
+    }
+    
+    pub async fn save_task_template(&self, template: &serde_json::Value) -> Result<String> {
+        let url = format!("{}/api/task-templates", self.base_url);
+        let response = self.client.post(&url).json(template).send().await?;
+        let result: serde_json::Value = response.json().await?;
+        Ok(result["id"].as_str().unwrap_or("").to_string())
+    }
+    
+    pub async fn delete_task_template(&self, id: &str) -> Result<()> {
+        let url = format!("{}/api/task-templates/{}", self.base_url, id);
+        self.client.delete(&url).send().await?;
+        Ok(())
+    }
 }

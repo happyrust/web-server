@@ -7,6 +7,7 @@ pub mod pages;
 pub mod components;
 pub mod canvas;
 pub mod theme;
+pub mod embedded_server;
 
 pub use app::EguiRemoteSyncApp;
 pub use state::AppState;

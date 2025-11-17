@@ -1,5 +1,18 @@
 // Topology canvas module
 
-pub mod topology_canvas;
+pub mod node;
+pub mod edge;
+pub mod layout;
+pub mod renderer;
 
-pub use topology_canvas::TopologyCanvas;
+pub use node::{TopologyNode, NodeType, NodeData, NodeId};
+pub use edge::TopologyEdge;
+pub use renderer::TopologyCanvas;
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum CanvasMode {
+    Select,
+    AddEnvironment,
+    AddSite,
+    Connect,
+}

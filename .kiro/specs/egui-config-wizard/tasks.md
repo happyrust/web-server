@@ -1,0 +1,26 @@
+# Implementation Plan
+
+- [x] 1. 实现完整的 egui 配置向导功能
+  - 创建目录结构（src/gui/pages/task_creation.rs, task_monitor.rs, database_manage.rs, config_editor.rs）
+  - 创建组件目录（src/gui/components/task_wizard.rs, task_params.rs, db_control.rs）
+  - 实现 TaskCreationWizard 核心组件，包含 4 个步骤（BasicInfo/SelectSite/Parameters/Preview）
+  - 实现步骤指示器 UI 和导航逻辑（上一步/下一步/验证）
+  - 实现 TaskCreationFormData、TaskType、TaskPriority、TaskParameters 数据结构
+  - 实现基础信息配置步骤（任务名称、类型、描述、优先级）
+  - 实现站点选择步骤（单选/批量模式、站点列表表格、测试连接）
+  - 实现数据解析任务参数配置（解析模式、数据库编号、参考号）
+  - 实现模型生成任务参数配置（生成选项、网格容差、最大并发、并行处理）
+  - 实现空间树生成任务参数配置（树深度、节点容量、索引类型）
+  - 实现任务预览和确认步骤（配置摘要、资源预估、注意事项）
+  - 实现批量任务创建功能（多站点选择、参数模板、变量替换、批量创建进度）
+  - 实现任务模板管理功能（保存/加载/删除模板、模板持久化）
+  - 实现 DatabaseManagePage 数据库管理页面（SurrealDB 配置、启动/停止/测试连接、日志输出）
+  - 实现 TaskMonitorPage 任务监控页面（任务列表、状态显示、进度条、取消/删除任务、自动刷新）
+  - 实现 ConfigEditorPage 配置编辑页面（表单模式/文本模式、配置验证、保存/重新加载/恢复默认）
+  - 在 src/gui/api_client.rs 中添加任务相关 API 方法（create_task, get_tasks, cancel_task, delete_task, task_templates）
+  - 在 src/gui/app.rs 中集成新页面（添加页面枚举、导航栏入口、页面路由、AppState 扩展）
+  - 实现错误处理和用户反馈（ConfigWizardError、API 错误处理、表单验证错误、Toast 提示、致命错误对话框）
+  - 实现配置持久化（任务模板保存到 ~/.config/egui_remote_sync/task_templates.json、DbOption.toml 读写、配置验证和恢复）
+  - 进行功能测试和验证（任务创建流程、数据库管理、任务监控、配置编辑、批量操作、模板管理）
+  - 编写用户文档（任务创建向导使用指南、数据库管理使用指南、配置编辑使用指南、常见问题和故障排除）
+  - _Requirements: 1.1-1.5, 2.1-2.5, 3.1-3.5, 4.1-4.5, 5.1-5.5, 6.1-6.5, 7.1-7.6, 8.1-8.5, 9.1-9.5, 10.1-10.5, 11.1-11.5, 12.1-12.5_

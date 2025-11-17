@@ -100,6 +100,7 @@ glam = { version = "0.30.8", features = ["serde", "rkyv"] }
 cached = "0.56.0"
 rkyv = { version = "0.8.12", features = ["hashbrown-0_15"] }
 rfd = { version = "0.15.4", features = ["async-std"] }
+dirs = "5.0"
 # redb = "3.0.1" # Removed - using SQLite for all storage
 
 image = { version = "0.24", default-features = false, features = ["png"] }
@@ -144,7 +145,12 @@ pollster = "0.4.0"
 async-std = "1.13.1"
 eframe = { version = "0.33.0", optional = true, default-features = true }  # 使用默认的 glow (OpenGL) backend，避免 wgpu 27.x 的 naga 兼容性问题
 egui = { version = "0.33.0", optional = true }
-egui_extras = { version = "0.33.0", optional = true}
+egui_extras = { version = "0.33.0", optional = true, features = ["serde", "image"] }
+egui_plot = { version = "0.33.0", optional = true }
+csv = { version = "1.3", optional = true }
+parking_lot = { version = "0.12", optional = true }
+arboard = { version = "3.4", optional = true }
+qrcode = { version = "0.14", optional = true }
 # re_ui = { path = "../rerun/crates/viewer/re_ui", optional = true }
 
 # GRPC 相关依赖
@@ -172,7 +178,7 @@ rust_xlsxwriter = "0.91.0"
 
 [features]
 default = ["ws", "gen_model", "manifold", "project_hd", "sqlite-index", "surreal-save"]
-gui = ["dep:eframe", "dep:egui", "dep:egui_extras"]
+gui = ["dep:eframe", "dep:egui", "dep:egui_extras", "dep:csv", "dep:parking_lot", "dep:arboard", "dep:qrcode", "dep:axum", "dep:tower", "dep:tower-http", "dep:sysinfo"]
 console = ["ws", "gen_model", "manifold", "project_hd", "mqtt"]
 # grpc = ["dep:tonic", "dep:prost", "dep:tonic-reflection", "dep:tokio-util", "dep:jsonwebtoken", "dep:rstar"]  #GRPC服务功能
 truck = []
@@ -261,7 +267,6 @@ name = "room_calculation_demo"
 path = "examples/room_calculation_demo.rs"
 required-features = ["gen_model", "sqlite-index"]
 
-eframe = { git = "https://github.com/emilk/egui.git", rev = "fa4cfec777c9ea21b8643f77b6a26561da44aad0", package = "eframe" }
 
 
 

@@ -2,15 +2,22 @@
 
 use crate::gui::{ApiClient, AppState};
 use crate::gui::components::ToastManager;
-use crate::gui::pages::{EnvironmentListPage, MonitorDashboardPage, WebServerPage};
+use crate::gui::pages::{EnvironmentListPage, MonitorDashboardPage, WebServerPage, TopologyCanvasPage, LogQueryPage, SiteConfigPage, TaskCreationPage, TaskMonitorPage, DatabaseManagePage, ConfigEditorPage};
 use crate::gui::theme::Theme;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Page {
     EnvironmentList,
+    SiteConfig,
+    TopologyCanvas,
     MonitorDashboard,
+    LogQuery,
     WebServer,
+    TaskCreation,
+    TaskMonitor,
+    DatabaseManage,
+    ConfigEditor,
     Settings,
 }
 
@@ -23,12 +30,22 @@ pub struct EguiRemoteSyncApp {
     
     // Pages
     environment_list_page: EnvironmentListPage,
+    site_config_page: SiteConfigPage,
+    topology_canvas_page: TopologyCanvasPage,
     monitor_dashboard_page: MonitorDashboardPage,
+    log_query_page: LogQueryPage,
     web_server_page: WebServerPage,
+    task_creation_page: TaskCreationPage,
+    task_monitor_page: TaskMonitorPage,
+    database_manage_page: DatabaseManagePage,
+    config_editor_page: ConfigEditorPage,
 }
 
 impl EguiRemoteSyncApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
+        // Setup Chinese font
+        Self::setup_chinese_fonts(&cc.egui_ctx);
+        
         let mut app = Self {
             state: AppState::new(),
             api_client: ApiClient::new("http://localhost:3000"),
@@ -36,17 +53,28 @@ impl EguiRemoteSyncApp {
             toast_manager: ToastManager::new(),
             theme: Theme::new(),
             environment_list_page: EnvironmentListPage::new(),
+            site_config_page: SiteConfigPage::new(),
+            topology_canvas_page: TopologyCanvasPage::new(),
             monitor_dashboard_page: MonitorDashboardPage::new(),
+            log_query_page: LogQueryPage::new(),
             web_server_page: WebServerPage::new(),
+            task_creation_page: TaskCreationPage::new(),
+            task_monitor_page: TaskMonitorPage::new(),
+            database_manage_page: DatabaseManagePage::new(),
+            config_editor_page: ConfigEditorPage::new(),
         };
         
         // Load saved state
         if let Some(storage) = cc.storage {
-            if let Some(page) = eframe::get_value(storage, "current_page") {
-                app.current_page = page;
+            if let Some(page) = storage.get_string("current_page") {
+                if let Ok(page) = serde_json::from_str(&page) {
+                    app.current_page = page;
+                }
             }
-            if let Some(theme) = eframe::get_value(storage, "theme") {
-                app.theme = theme;
+            if let Some(theme) = storage.get_string("theme") {
+                if let Ok(theme) = serde_json::from_str(&theme) {
+                    app.theme = theme;
+                }
             }
         }
         
@@ -54,6 +82,124 @@ impl EguiRemoteSyncApp {
         app.theme.apply(&cc.egui_ctx);
         
         app
+    }
+    
+    fn setup_chinese_fonts(ctx: &egui::Context) {
+        let mut fonts = egui::FontDefinitions::default();
+        
+        // Try to load embedded Chinese font
+        // If the font file doesn't exist, we'll use system fonts as fallback
+        let font_loaded = Self::try_load_embedded_font(&mut fonts);
+        
+        if !font_loaded {
+            // Fallback: Try to load from system fonts
+            Self::try_load_system_font(&mut fonts);
+        }
+        
+        ctx.set_fonts(fonts);
+    }
+    
+    fn try_load_embedded_font(fonts: &mut egui::FontDefinitions) -> bool {
+        // Try to load embedded font (if available)
+        // This requires the font file to be placed in assets/fonts/
+        #[cfg(feature = "embed_fonts")]
+        {
+            fonts.font_data.insert(
+                "noto_sans_sc".to_owned(),
+                std::sync::Arc::new(egui::FontData::from_static(include_bytes!(
+                    "../../assets/fonts/NotoSansSC-Regular.ttf"
+                ))),
+            );
+            
+            fonts
+                .families
+                .entry(egui::FontFamily::Proportional)
+                .or_default()
+                .insert(0, "noto_sans_sc".to_owned());
+            
+            fonts
+                .families
+                .entry(egui::FontFamily::Monospace)
+                .or_default()
+                .push("noto_sans_sc".to_owned());
+            
+            return true;
+        }
+        
+        #[cfg(not(feature = "embed_fonts"))]
+        {
+            // Try to load from file system
+            if let Ok(font_data) = std::fs::read("assets/fonts/NotoSansSC-Regular.ttf") {
+                fonts.font_data.insert(
+                    "noto_sans_sc".to_owned(),
+                    std::sync::Arc::new(egui::FontData::from_owned(font_data)),
+                );
+                
+                fonts
+                    .families
+                    .entry(egui::FontFamily::Proportional)
+                    .or_default()
+                    .insert(0, "noto_sans_sc".to_owned());
+                
+                fonts
+                    .families
+                    .entry(egui::FontFamily::Monospace)
+                    .or_default()
+                    .push("noto_sans_sc".to_owned());
+                
+                return true;
+            }
+        }
+        
+        false
+    }
+    
+    fn try_load_system_font(fonts: &mut egui::FontDefinitions) {
+        // On different platforms, try to load system Chinese fonts
+        let system_font_paths = if cfg!(target_os = "windows") {
+            vec![
+                "C:\\Windows\\Fonts\\msyh.ttc",      // Microsoft YaHei
+                "C:\\Windows\\Fonts\\simhei.ttf",    // SimHei
+                "C:\\Windows\\Fonts\\simsun.ttc",    // SimSun
+            ]
+        } else if cfg!(target_os = "macos") {
+            vec![
+                "/System/Library/Fonts/PingFang.ttc",           // PingFang SC
+                "/System/Library/Fonts/STHeiti Light.ttc",      // STHeiti
+                "/Library/Fonts/Arial Unicode.ttf",             // Arial Unicode MS
+            ]
+        } else {
+            // Linux
+            vec![
+                "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+                "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
+                "/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf",
+            ]
+        };
+        
+        for font_path in system_font_paths {
+            if let Ok(font_data) = std::fs::read(font_path) {
+                fonts.font_data.insert(
+                    "system_chinese".to_owned(),
+                    std::sync::Arc::new(egui::FontData::from_owned(font_data)),
+                );
+                
+                fonts
+                    .families
+                    .entry(egui::FontFamily::Proportional)
+                    .or_default()
+                    .insert(0, "system_chinese".to_owned());
+                
+                fonts
+                    .families
+                    .entry(egui::FontFamily::Monospace)
+                    .or_default()
+                    .push("system_chinese".to_owned());
+                
+                log::info!("Loaded system Chinese font from: {}", font_path);
+                break;
+            }
+        }
     }
     
     fn render_menu_bar(&mut self, ui: &mut egui::Ui) {
@@ -68,11 +214,33 @@ impl EguiRemoteSyncApp {
                 if ui.button("环境列表").clicked() {
                     self.current_page = Page::EnvironmentList;
                 }
+                if ui.button("站点配置").clicked() {
+                    self.current_page = Page::SiteConfig;
+                }
+                if ui.button("拓扑配置").clicked() {
+                    self.current_page = Page::TopologyCanvas;
+                }
                 if ui.button("监控面板").clicked() {
                     self.current_page = Page::MonitorDashboard;
                 }
+                if ui.button("日志查询").clicked() {
+                    self.current_page = Page::LogQuery;
+                }
                 if ui.button("Web Server").clicked() {
                     self.current_page = Page::WebServer;
+                }
+                ui.separator();
+                if ui.button("任务创建").clicked() {
+                    self.current_page = Page::TaskCreation;
+                }
+                if ui.button("任务监控").clicked() {
+                    self.current_page = Page::TaskMonitor;
+                }
+                if ui.button("数据库管理").clicked() {
+                    self.current_page = Page::DatabaseManage;
+                }
+                if ui.button("配置编辑").clicked() {
+                    self.current_page = Page::ConfigEditor;
                 }
             });
             
@@ -93,14 +261,38 @@ impl EguiRemoteSyncApp {
             if ui.selectable_label(self.current_page == Page::EnvironmentList, "  环境列表").clicked() {
                 self.current_page = Page::EnvironmentList;
             }
+            if ui.selectable_label(self.current_page == Page::SiteConfig, "  站点配置").clicked() {
+                self.current_page = Page::SiteConfig;
+            }
+            if ui.selectable_label(self.current_page == Page::TopologyCanvas, "  拓扑配置").clicked() {
+                self.current_page = Page::TopologyCanvas;
+            }
             if ui.selectable_label(self.current_page == Page::MonitorDashboard, "  监控面板").clicked() {
                 self.current_page = Page::MonitorDashboard;
+            }
+            if ui.selectable_label(self.current_page == Page::LogQuery, "  日志查询").clicked() {
+                self.current_page = Page::LogQuery;
+            }
+            
+            ui.add_space(10.0);
+            ui.label("任务管理");
+            if ui.selectable_label(self.current_page == Page::TaskCreation, "  任务创建").clicked() {
+                self.current_page = Page::TaskCreation;
+            }
+            if ui.selectable_label(self.current_page == Page::TaskMonitor, "  任务监控").clicked() {
+                self.current_page = Page::TaskMonitor;
             }
             
             ui.add_space(10.0);
             ui.label("系统管理");
             if ui.selectable_label(self.current_page == Page::WebServer, "  Web Server").clicked() {
                 self.current_page = Page::WebServer;
+            }
+            if ui.selectable_label(self.current_page == Page::DatabaseManage, "  数据库管理").clicked() {
+                self.current_page = Page::DatabaseManage;
+            }
+            if ui.selectable_label(self.current_page == Page::ConfigEditor, "  配置编辑").clicked() {
+                self.current_page = Page::ConfigEditor;
             }
             if ui.selectable_label(self.current_page == Page::Settings, "  设置").clicked() {
                 self.current_page = Page::Settings;
@@ -159,11 +351,32 @@ impl eframe::App for EguiRemoteSyncApp {
                 Page::EnvironmentList => {
                     self.environment_list_page.render(ui, &mut self.state, &self.api_client);
                 }
+                Page::SiteConfig => {
+                    self.site_config_page.render(ui, &mut self.state, &self.api_client);
+                }
+                Page::TopologyCanvas => {
+                    self.topology_canvas_page.render(ui, &mut self.state, &self.api_client);
+                }
                 Page::MonitorDashboard => {
                     self.monitor_dashboard_page.render(ui, &mut self.state, &self.api_client);
                 }
+                Page::LogQuery => {
+                    self.log_query_page.render(ui, &mut self.state, &self.api_client);
+                }
                 Page::WebServer => {
                     self.web_server_page.render(ui);
+                }
+                Page::TaskCreation => {
+                    self.task_creation_page.render(ui, &mut self.state, &self.api_client);
+                }
+                Page::TaskMonitor => {
+                    self.task_monitor_page.render(ui, &self.api_client);
+                }
+                Page::DatabaseManage => {
+                    self.database_manage_page.render(ui);
+                }
+                Page::ConfigEditor => {
+                    self.config_editor_page.render(ui);
                 }
                 Page::Settings => {
                     self.render_settings(ui);
@@ -181,7 +394,11 @@ impl eframe::App for EguiRemoteSyncApp {
     }
     
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
-        eframe::set_value(storage, "current_page", &self.current_page);
-        eframe::set_value(storage, "theme", &self.theme);
+        if let Ok(page_json) = serde_json::to_string(&self.current_page) {
+            storage.set_string("current_page", page_json);
+        }
+        if let Ok(theme_json) = serde_json::to_string(&self.theme) {
+            storage.set_string("theme", theme_json);
+        }
     }
 }

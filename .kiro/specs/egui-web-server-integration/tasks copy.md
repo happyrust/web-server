@@ -1,0 +1,160 @@
+# Implementation Plan
+
+- [ ] 1. 实现嵌入式 Web Server 核心功能
+  - 创建 `src/gui/embedded_server/` 模块目录
+  - 实现 ServerHandle 结构体，管理服务器生命周期（启动、停止、优雅关闭）
+  - 实现 ServerMetrics 结构体，使用原子类型收集请求统计（总请求数、成功数、失败数、活跃连接数）
+  - 实现 start_embedded_server 函数，在后台 tokio 任务中启动 Axum 服务器
+  - 实现 shutdown 信号处理，使用 oneshot channel 通知服务器停止
+  - 在 AppState 中添加 web_server_handle、server_metrics、request_logger 字段
+  - _Requirements: 1.1-1.5_
+
+- [ ] 2. 实现指标收集中间件
+  - 创建 MetricsMiddleware，在每个请求前后更新统计信息
+  - 实现 ResponseTimeRecord 结构体，记录请求路径和响应时间
+  - 实现 ErrorLog 结构体，记录错误请求的详细信息
+  - 使用 VecDeque 限制历史数据大小（响应时间最近 1000 条，错误日志最近 100 条）
+  - 实现 MetricsSnapshot 结构体，提供指标快照功能
+  - 在 Axum Router 中注册 MetricsMiddleware
+  - _Requirements: 3.1-3.5_
+
+- [ ] 3. 实现请求日志记录
+  - 创建 RequestLogger 结构体，使用 Arc<RwLock<VecDeque<RequestLog>>> 存储日志
+  - 实现 RequestLog 结构体，包含时间戳、方法、路径、状态码、响应时间、客户端 IP
+  - 实现 logging_middleware，在每个请求完成后记录日志
+  - 实现 get_logs 方法，返回最近的日志列表
+  - 实现 clear 方法，清空日志缓存
+  - 在 Axum Router 中注册 logging_middleware
+  - _Requirements: 4.1-4.5_
+
+- [ ] 4. 扩展 WebServerPage 控制面板
+  - 在 WebServerPage 中添加 server_handle、metrics、request_logger 字段
+  - 实现 render_server_status 方法，显示服务器状态（运行中/已停止）、监听地址、运行时长
+  - 实现 start_server 方法，调用 start_embedded_server 启动服务器
+  - 实现 stop_server 方法，发送 shutdown 信号并等待服务器停止
+  - 实现 restart_server 方法，先停止再启动服务器
+  - 添加启动/停止/重启按钮，绑定对应方法
+  - _Requirements: 2.1-2.5_
+
+- [ ] 5. 实现统计信息展示
+  - 实现 render_metrics_cards 方法，显示三个统计卡片（请求统计、连接统计、性能统计）
+  - 在请求统计卡片中显示总请求数、成功数、失败数、成功率
+  - 在连接统计卡片中显示活跃连接数、峰值连接数
+  - 在性能统计卡片中显示平均响应时间
+  - 使用 egui::Frame::group 和不同背景色区分卡片
+  - 添加"刷新统计"按钮，手动更新指标
+  - _Requirements: 3.1-3.5_
+
+- [ ] 6. 实现系统性能监控
+  - 添加 sysinfo 依赖到 Cargo.toml
+  - 创建 SystemMonitor 结构体，使用 sysinfo::System 获取系统信息
+  - 实现 get_info 方法，返回 CPU 使用率、内存使用量、内存使用百分比
+  - 在 WebServerPage 中添加 system_monitor 字段
+  - 在性能统计卡片中显示 CPU 和内存使用率
+  - 实现每秒自动刷新系统信息
+  - _Requirements: 9.1-9.5_
+
+- [ ] 7. 实现性能趋势图表
+  - 添加 egui_plot 依赖到 Cargo.toml
+  - 在 WebServerPage 中添加 metrics_history 字段（VecDeque<MetricsSnapshot>）
+  - 实现 render_performance_charts 方法，显示两个趋势图
+  - 使用 egui_plot::Plot 绘制请求数趋势图（最近 60 个数据点）
+  - 使用 egui_plot::Plot 绘制响应时间趋势图（最近 60 个数据点）
+  - 实现每 5 秒自动采样一次指标，添加到 metrics_history
+  - 限制 metrics_history 最多保留 60 个数据点（5 分钟历史）
+  - _Requirements: 3.5_
+
+- [ ] 8. 实现请求日志查看器
+  - 实现 render_request_logs 方法，使用 egui_extras::TableBuilder 显示日志表格
+  - 表格列：时间、方法、路径、状态码、响应时间、客户端 IP
+  - 显示最近 100 条日志，按时间倒序排列
+  - 根据状态码使用不同颜色（成功绿色、失败红色）
+  - 添加"刷新"和"清空"按钮
+  - 实现日志过滤功能（按路径、状态码、时间范围）
+  - _Requirements: 4.1-4.5_
+
+- [ ] 9. 实现配置导出 API
+  - 在 src/web_server/mod.rs 中添加 /api/config/export 路由
+  - 实现 export_config_handler 函数，从数据库加载环境和站点配置
+  - 实现 ConfigExportResponse 结构体，包含版本、导出时间、环境列表、站点列表
+  - 实现敏感信息过滤，移除密码、密钥等字段
+  - 支持 ?format=json 和 ?format=toml 查询参数
+  - 支持 ?env_id=xxx 查询参数，只导出指定环境
+  - _Requirements: 5.1-5.5_
+
+- [ ] 10. 实现配置导入功能
+  - 在 WebServerPage 中添加 show_config_import、import_url、import_preview 字段
+  - 实现 render_config_management 方法，显示"导出配置"、"导入配置"、"生成二维码"按钮
+  - 实现 render_config_import_dialog 方法，显示配置导入对话框
+  - 实现 fetch_config_from_url 方法，发送 HTTP GET 请求获取配置
+  - 实现配置预览，显示将要导入的环境和站点数量
+  - 实现 import_config 方法，调用本地 API 创建环境和站点
+  - 处理导入冲突（同名环境/站点），提示用户选择覆盖或跳过
+  - 显示导入结果摘要（成功数量、失败数量、跳过数量）
+  - _Requirements: 6.1-6.7_
+
+- [ ] 11. 实现配置导出功能
+  - 实现 export_config 方法，生成当前站点的配置导出 URL
+  - 实现"复制 URL"按钮，使用 arboard 或 clipboard 库复制到剪贴板
+  - 显示成功提示（Toast 或临时消息）
+  - 实现"测试 URL"按钮，访问自己的导出 API 验证配置
+  - 支持选择特定环境导出（生成带 ?env_id=xxx 的 URL）
+  - _Requirements: 7.1-7.5_
+
+- [ ] 12. 实现二维码生成
+  - 添加 qrcode 依赖到 Cargo.toml
+  - 实现 generate_config_qr_code 函数，使用 qrcode 库生成 SVG 格式二维码
+  - 创建 QrCodeDisplay 组件，在 egui 中显示二维码
+  - 实现"生成二维码"按钮，点击后显示二维码对话框
+  - 在对话框中显示二维码图片和 URL 文本
+  - 添加"保存图片"按钮，将二维码保存为 PNG 文件
+  - _Requirements: 7.3_
+
+- [ ]* 13. 实现配置验证和健康检查
+  - 实现 validate_config 方法，检查必填字段、格式正确性、端口冲突
+  - 在配置导入后自动执行验证，显示验证结果
+  - 实现"健康检查"按钮，测试 MQTT 连接、文件服务器连接、数据库连接
+  - 显示健康检查结果（成功项、失败项、警告项）
+  - 提供修复建议和快速修复按钮
+  - _Requirements: 10.1-10.5_
+
+- [ ]* 14. 实现配置同步状态监控
+  - 创建配置同步状态页面或在 WebServerPage 中添加子标签
+  - 显示所有站点的配置版本号和最后同步时间
+  - 实现"检查配置差异"按钮，对比本地和远程站点配置
+  - 高亮显示不一致的配置项
+  - 实现"推送配置"按钮，将本地配置推送到远程站点
+  - 更新站点的配置版本号和同步时间
+  - _Requirements: 8.1-8.5_
+
+- [ ]* 15. 实现性能告警功能
+  - 在 WebServerPage 中添加 performance_alerts 字段
+  - 实现性能阈值配置（CPU > 80%、内存 > 90%、响应时间 > 1000ms）
+  - 实现性能监控循环，每秒检查一次性能指标
+  - 当指标超过阈值时，在界面顶部显示警告横幅
+  - 实现"导出性能报告"按钮，生成 CSV 格式的性能报告
+  - 保存阈值配置到本地文件
+  - _Requirements: 9.3-9.5_
+
+- [ ]* 16. 编写单元测试
+  - 为 ServerMetrics 编写单元测试（increment、record_response_time、get_snapshot）
+  - 为 RequestLogger 编写单元测试（log、get_logs、clear）
+  - 为 SystemMonitor 编写单元测试（get_info）
+  - 为 config_export_handler 编写单元测试（正常导出、过滤环境、敏感信息过滤）
+  - 为 config_import 编写单元测试（正常导入、冲突处理、错误处理）
+  - 使用 #[tokio::test] 测试异步函数
+
+- [ ]* 17. 编写集成测试
+  - 测试服务器启动和停止流程
+  - 测试指标收集中间件（发送测试请求，验证指标更新）
+  - 测试配置导入流程（模拟 HTTP 请求，验证数据保存）
+  - 测试并发场景（多线程访问共享状态）
+  - 测试错误恢复（服务器崩溃后重启）
+
+- [ ]* 18. 性能优化和文档
+  - 使用 wrk 或 ab 工具进行负载测试，验证高并发性能
+  - 优化 VecDeque 大小限制，平衡内存使用和历史数据保留
+  - 优化图表渲染性能，避免每帧重绘
+  - 编写用户手册，说明 Web Server 控制面板的使用方法
+  - 编写开发文档，说明嵌入式服务器的架构和扩展方法
+  - 更新 README.md，添加新功能说明

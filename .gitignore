@@ -108,4 +108,5 @@ ams-8009-test.db
 ams-demo.db/
 ams-test.db/
 surreal-8010.kv
-rumqttd-server/target
+rumqttd-server/targetweb_server
+web-test/web_server
