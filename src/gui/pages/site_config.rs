@@ -145,69 +145,38 @@ impl SiteConfigPage {
         
         ui.separator();
         
-        // Site list table
+        // Site cards grid
         egui::ScrollArea::vertical().show(ui, |ui| {
-            egui::Grid::new("site_list")
-                .striped(true)
-                .num_columns(7)
-                .spacing([10.0, 5.0])
-                .show(ui, |ui| {
-                    // Header
-                    ui.strong("站点名称");
-                    ui.strong("环境");
-                    ui.strong("HTTP 地址");
-                    ui.strong("地区");
-                    ui.strong("数据库编号");
-                    ui.strong("状态");
-                    ui.strong("操作");
-                    ui.end_row();
-                    
-                    // Rows
-                    for site in &state.sites {
-                        ui.label(&site.name);
-                        
-                        // Find environment name
-                        let env_name = state.environments
-                            .iter()
-                            .find(|e| e.id == site.env_id)
-                            .map(|e| e.name.as_str())
-                            .unwrap_or("未知");
-                        ui.label(env_name);
-                        
-                        if let Some(host) = &site.http_host {
-                            ui.label(host);
-                        } else {
-                            ui.label("-");
+            if state.sites.is_empty() {
+                ui.vertical_centered(|ui| {
+                    ui.add_space(50.0);
+                    ui.label("暂无站点");
+                    ui.label("点击上方 ➕ 添加站点 按钮创建新站点");
+                });
+            } else {
+                // Calculate cards per row based on available width
+                let available_width = ui.available_width();
+                let card_width = 350.0;
+                let spacing = 10.0;
+                let cards_per_row = ((available_width + spacing) / (card_width + spacing)).floor().max(1.0) as usize;
+                
+                // Render cards in grid
+                let mut current_row = 0;
+                ui.horizontal_wrapped(|ui| {
+                    for (idx, site) in state.sites.iter().enumerate() {
+                        if idx > 0 && idx % cards_per_row == 0 {
+                            current_row += 1;
                         }
                         
-                        ui.label(&site.location);
+                        self.render_site_card(ui, site, state);
                         
-                        if let Some(dbnums) = &site.dbnums {
-                            ui.label(dbnums);
-                        } else {
-                            ui.label("-");
+                        // Add spacing between cards
+                        if (idx + 1) % cards_per_row != 0 && idx < state.sites.len() - 1 {
+                            ui.add_space(spacing);
                         }
-                        
-                        // Status indicator
-                        ui.colored_label(egui::Color32::GRAY, "⚪ 未部署");
-                        
-                        ui.horizontal(|ui| {
-                            if ui.small_button("编辑").clicked() {
-                                self.site_form = SiteConfigForm::from_site(site);
-                                self.show_site_form = true;
-                            }
-                            if ui.small_button("测试").clicked() {
-                                // Test connection
-                            }
-                            if ui.small_button("删除").clicked() {
-                                self.delete_target = Some(site.id.clone());
-                                self.confirm_delete.open("确认删除", "确定要删除这个站点吗？");
-                            }
-                        });
-                        
-                        ui.end_row();
                     }
                 });
+            }
         });
         
         // Site form dialog
@@ -253,6 +222,121 @@ impl SiteConfigPage {
                 self.delete_target = None;
             }
         }
+    }
+    
+    fn render_site_card(&mut self, ui: &mut egui::Ui, site: &RemoteSyncSite, state: &AppState) {
+        let card_width = 350.0;
+        
+        egui::Frame::group(ui.style())
+            .fill(egui::Color32::from_rgb(248, 250, 252))
+            .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(226, 232, 240)))
+            .rounding(egui::Rounding::same(8))
+            .inner_margin(egui::Margin::same(16))
+            .show(ui, |ui| {
+                ui.set_width(card_width);
+                
+                // Header: Site name and status
+                ui.horizontal(|ui| {
+                    ui.vertical(|ui| {
+                        ui.strong(&site.name);
+                        
+                        // Environment badge
+                        let env_name = state.environments
+                            .iter()
+                            .find(|e| e.id == site.env_id)
+                            .map(|e| e.name.as_str())
+                            .unwrap_or("未知");
+                        
+                        ui.horizontal(|ui| {
+                            ui.label("🏷️");
+                            ui.label(env_name);
+                        });
+                    });
+                    
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
+                        // Status indicator
+                        ui.colored_label(egui::Color32::from_rgb(156, 163, 175), "⚪ 未部署");
+                    });
+                });
+                
+                ui.add_space(8.0);
+                ui.separator();
+                ui.add_space(8.0);
+                
+                // Site details
+                egui::Grid::new(format!("site_card_{}", site.id))
+                    .num_columns(2)
+                    .spacing([8.0, 6.0])
+                    .show(ui, |ui| {
+                        // Location
+                        ui.label("📍");
+                        ui.label(&site.location);
+                        ui.end_row();
+                        
+                        // HTTP Host
+                        if let Some(host) = &site.http_host {
+                            ui.label("🌐");
+                            ui.label(host);
+                            ui.end_row();
+                        }
+                        
+                        // Database numbers
+                        if let Some(dbnums) = &site.dbnums {
+                            ui.label("💾");
+                            ui.label(format!("DB: {}", dbnums));
+                            ui.end_row();
+                        }
+                        
+                        // Created time
+                        ui.label("🕐");
+                        if let Ok(created) = chrono::DateTime::parse_from_rfc3339(&site.created_at) {
+                            ui.label(created.format("%Y-%m-%d %H:%M").to_string());
+                        } else {
+                            ui.label(&site.created_at);
+                        }
+                        ui.end_row();
+                    });
+                
+                // Notes preview (if exists)
+                if let Some(notes) = &site.notes {
+                    if !notes.trim().is_empty() {
+                        ui.add_space(8.0);
+                        ui.separator();
+                        ui.add_space(4.0);
+                        
+                        // Show first line of notes
+                        let first_line = notes.lines().next().unwrap_or("");
+                        if !first_line.is_empty() {
+                            ui.label(egui::RichText::new(format!("📝 {}", first_line))
+                                .color(egui::Color32::from_rgb(100, 116, 139))
+                                .size(12.0));
+                        }
+                    }
+                }
+                
+                ui.add_space(8.0);
+                ui.separator();
+                ui.add_space(8.0);
+                
+                // Action buttons
+                ui.horizontal(|ui| {
+                    if ui.button("✏️ 编辑").clicked() {
+                        self.site_form = SiteConfigForm::from_site(site);
+                        self.show_site_form = true;
+                    }
+                    
+                    if ui.button("🔌 测试").clicked() {
+                        // Test connection
+                    }
+                    
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.button("🗑️ 删除").clicked() {
+                            self.delete_target = Some(site.id.clone());
+                            self.confirm_delete.open("确认删除", "确定要删除这个站点吗？");
+                        }
+                    });
+                });
+            });
     }
     
     fn render_site_form(&mut self, ui: &mut egui::Ui, state: &AppState) {
