@@ -17,6 +17,11 @@ name = "db_option_ui"
 path = "src/bin/db_option_ui/main.rs"
 required-features = ["web_server"]
 
+[[bin]]
+name = "egui_remote_sync"
+path = "src/bin/egui_remote_sync.rs"
+required-features = ["gui"]
+
 # [[bin]]
 # name = "gen_xkt_new"
 # path = "src/bin/gen_xkt_new.rs"
@@ -67,7 +72,7 @@ parry2d = { version = "0.25.0", features = [
     "serde-serialize",
 ] }
 parse_pdms_db = { git = "https://github.com/happyrust/aios-parse-pdms"}
-aios_core = { git = "https://github.com/happyrust/rs-core.git", branch = "2.3" }
+aios_core = { git = "https://github.com/happyrust/rs-core.git" }
 
 
 
@@ -137,7 +142,9 @@ toml = "0.9.5"
 toml_edit = "0.22"
 pollster = "0.4.0"
 async-std = "1.13.1"
-eframe = { version = "0.33.0", optional = true }  # 使用默认的 glow (OpenGL) backend，避免 wgpu 27.x 的 naga 兼容性问题
+eframe = { version = "0.33.0", optional = true, default-features = true }  # 使用默认的 glow (OpenGL) backend，避免 wgpu 27.x 的 naga 兼容性问题
+egui = { version = "0.33.0", optional = true }
+egui_extras = { version = "0.33.0", optional = true}
 # re_ui = { path = "../rerun/crates/viewer/re_ui", optional = true }
 
 # GRPC 相关依赖
@@ -165,7 +172,7 @@ rust_xlsxwriter = "0.91.0"
 
 [features]
 default = ["ws", "gen_model", "manifold", "project_hd", "sqlite-index", "surreal-save"]
-# gui = ["dep:gpui-component", "dep:gpui", "dep:story"]
+gui = ["dep:eframe", "dep:egui", "dep:egui_extras"]
 console = ["ws", "gen_model", "manifold", "project_hd", "mqtt"]
 # grpc = ["dep:tonic", "dep:prost", "dep:tonic-reflection", "dep:tokio-util", "dep:jsonwebtoken", "dep:rstar"]  #GRPC服务功能
 truck = []
@@ -256,14 +263,5 @@ required-features = ["gen_model", "sqlite-index"]
 
 eframe = { git = "https://github.com/emilk/egui.git", rev = "fa4cfec777c9ea21b8643f77b6a26561da44aad0", package = "eframe" }
 
-# [patch."https://gitee.com/happydpc/rs-core"]
-# aios_core = { git = "https://github.com/happyrust/rs-core.git", branch = "2.3", default-features = false, features = [
-#     "web_server",
-#     "bevy_transform",
-#     "bevy_math",
-#     "bevy_ecs",
-#     "bevy_reflect",
-#     "debug_expr",
-#     "gen_model",
-#     "manifold",
-# ] }
+
+

@@ -16,7 +16,7 @@ echo "🔨 修改依赖为 Git 源..."
 # 替换本地路径依赖为 Git 依赖
 sed -i.bak 's|parse_pdms_db = { path = "../aios-parse-pdms" }|parse_pdms_db = { git = "https://gitee.com/happydpc/aios-parse-pdms.git" }|' Cargo.toml
 
-sed -i.bak 's|aios_core = { path = "../rs-core"|aios_core = { git = "https://gitee.com/happydpc/rs-core.git", branch = "2.3"|' Cargo.toml
+sed -i.bak 's|aios_core = { path = "../rs-core"|aios_core = { git = "https://gitee.com/happydpc/rs-core.git"|' Cargo.toml
 
 sed -i.bak 's|pdms_io = { path = "../pdms-io-fork" }|pdms_io = { git = "https://gitee.com/happydpc/pdms-io.git" }|' Cargo.toml
 
