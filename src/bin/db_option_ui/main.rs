@@ -8,7 +8,6 @@ use std::path::PathBuf;
 
 use aios_core::options::DbOption;
 use eframe::egui;
-use re_ui::apply_style_and_install_loaders;
 
 use app::ConfigApp;
 use models::{FieldState, ParseMode, StatusKind, StatusMessage, TaskProgress};
@@ -62,7 +61,6 @@ fn main() -> eframe::Result<()> {
         "DbOption 配置",
         native_options,
         Box::new(move |cc| {
-            apply_style_and_install_loaders(&cc.egui_ctx);
             setup_chinese_fonts(&cc.egui_ctx);
             let app_path = path.clone();
             match ConfigApp::new(app_path.clone()) {

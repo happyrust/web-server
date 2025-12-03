@@ -1,0 +1,49 @@
+# 测试配置文件 - 用于验证格式保留功能
+# 这个文件演示了各种 TOML 格式特性
+
+#同步文件配置
+total_sync = true
+incr_sync = false
+sync_live = true
+
+# 项目设置（带注释）
+project_path = "/path/to/project"
+included_projects = ["Project1", "Project2", "Project3"]
+project_name = "TestProject"
+project_code = '1234'  # 使用单引号
+module = "DESI"
+
+# 位置和数据库
+location = "Beijing"
+location_dbs = [1, 2, 3, 4, 5]
+
+# 数据库连接参数
+ip = "127.0.0.1"
+user = "root"
+password = "secret"
+port = "3306"  # MySQL 默认端口
+
+# MQTT 配置
+mqtt_host = "mqtt.example.com"
+mqtt_port = 1883  # 标准 MQTT 端口
+
+# 服务器配置
+server_release_ip = "0.0.0.0:9099"
+file_server_host = "http://example.com/assets"
+
+# 模型生成配置
+gen_model = true
+gen_mesh = true
+gen_spatial_tree = true
+apply_boolean_operation = true
+mesh_tol_ratio = 3.0  # 网格容差比例
+
+# 其他配置（不会被修改）
+debug_mode = true
+custom_setting = "keep_this_value"
+another_array = [10, 20, 30]
+
+# 多行注释示例
+# 这些注释应该被完整保留
+# 即使修改了上面的配置项
+

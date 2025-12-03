@@ -46,6 +46,10 @@ pub struct RemoteSyncSite {
     /// 逗号分隔或JSON数组（UI 层转换）
     pub dbnums: Option<String>,
     pub notes: Option<String>,
+    /// 主节点MQTT服务器地址（从节点需要连接的目标）
+    pub master_mqtt_host: Option<String>,
+    /// 主节点MQTT服务器端口
+    pub master_mqtt_port: Option<u16>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -121,22 +125,7 @@ pub fn open_sqlite() -> Result<rusqlite::Connection, Box<dyn std::error::Error>>
         "deployment_sites.sqlite".to_string()
     };
 
-    eprintln!("打开数据库: {}", db_path);
-
-    let mut conn = rusqlite::Connection::open(&db_path)?;
-
-    // 检查是否为 LiteFS 挂载点
-    let is_litefs = db_path.starts_with("/litefs");
-
-    if is_litefs {
-        // LiteFS 下推荐设置
-        eprintln!("检测到 LiteFS 环境，配置 WAL 模式");
-        conn.pragma_update(None, "journal_mode", "WAL")?;
-        conn.pragma_update(None, "synchronous", "NORMAL")?;
-    } else {
-        // 本地开发环境
-        eprintln!("本地开发环境");
-    }
+    let conn = rusqlite::Connection::open(&db_path)?;
     // env 表
     conn.execute(
         "CREATE TABLE IF NOT EXISTS remote_sync_envs (
@@ -173,12 +162,27 @@ pub fn open_sqlite() -> Result<rusqlite::Connection, Box<dyn std::error::Error>>
             http_host TEXT,
             dbnums TEXT,
             notes TEXT,
+            master_mqtt_host TEXT,
+            master_mqtt_port INTEGER,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL,
             FOREIGN KEY(env_id) REFERENCES remote_sync_envs(id) ON DELETE CASCADE
         )",
         rusqlite::params![],
     )?;
+    // 尝试向已存在表添加新列（忽略错误）
+    let _ = conn.execute(
+        "ALTER TABLE remote_sync_sites ADD COLUMN master_mqtt_host TEXT",
+        rusqlite::params![],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE remote_sync_sites ADD COLUMN master_mqtt_port INTEGER",
+        rusqlite::params![],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE remote_sync_sites ADD COLUMN master_location TEXT",
+        rusqlite::params![],
+    );
     // 日志表
     conn.execute(
         "CREATE TABLE IF NOT EXISTS remote_sync_logs (
@@ -215,7 +219,7 @@ pub fn open_sqlite() -> Result<rusqlite::Connection, Box<dyn std::error::Error>>
 
 // ===== Envs =====
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct EnvCreateRequest {
     pub name: String,
     pub mqtt_host: Option<String>,
@@ -394,12 +398,16 @@ pub struct SiteCreateRequest {
     pub http_host: Option<String>,
     pub dbnums: Option<String>,
     pub notes: Option<String>,
+    /// 主节点MQTT服务器地址（从节点需要连接的目标，可选，添加从节点时自动填充）
+    pub master_mqtt_host: Option<String>,
+    /// 主节点MQTT服务器端口
+    pub master_mqtt_port: Option<u16>,
 }
 
 pub async fn list_sites(Path(env_id): Path<String>) -> Result<Json<serde_json::Value>, StatusCode> {
     let conn = open_sqlite().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let mut stmt = conn
-        .prepare("SELECT id, env_id, name, location, http_host, dbnums, notes, created_at, updated_at FROM remote_sync_sites WHERE env_id = ?1 ORDER BY created_at DESC")
+        .prepare("SELECT id, env_id, name, location, http_host, dbnums, notes, master_mqtt_host, master_mqtt_port, created_at, updated_at FROM remote_sync_sites WHERE env_id = ?1 ORDER BY created_at DESC")
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let rows = stmt
         .query_map(rusqlite::params![env_id], |row| {
@@ -411,8 +419,10 @@ pub async fn list_sites(Path(env_id): Path<String>) -> Result<Json<serde_json::V
                 http_host: row.get(4)?,
                 dbnums: row.get(5)?,
                 notes: row.get(6)?,
-                created_at: row.get(7)?,
-                updated_at: row.get(8)?,
+                master_mqtt_host: row.get(7)?,
+                master_mqtt_port: row.get(8).ok().flatten().map(|p: i64| p as u16),
+                created_at: row.get(9)?,
+                updated_at: row.get(10)?,
             })
         })
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
@@ -425,30 +435,163 @@ pub async fn list_sites(Path(env_id): Path<String>) -> Result<Json<serde_json::V
 
 pub async fn create_site(
     Path(env_id): Path<String>,
-    Json(req): Json<SiteCreateRequest>,
+    Json(mut req): Json<SiteCreateRequest>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     if req.name.trim().is_empty() {
         return Err(StatusCode::BAD_REQUEST);
     }
-    let conn = open_sqlite().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let id = Uuid::new_v4().to_string();
-    let now = chrono::Utc::now().to_rfc3339();
-    conn.execute(
-        "INSERT INTO remote_sync_sites (id, env_id, name, location, http_host, dbnums, notes, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)",
-        rusqlite::params![
-            id,
-            env_id,
-            req.name,
-            req.location,
-            req.http_host,
-            req.dbnums,
-            req.notes,
-            now,
-        ],
-    )
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    Ok(Json(json!({"status":"success","id": id})))
+
+    // 如果未提供主节点MQTT信息，尝试从当前站点配置或环境配置获取
+    if req.master_mqtt_host.is_none() {
+        // 先尝试从环境配置获取
+        let conn = open_sqlite().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        let mut stmt = conn
+            .prepare("SELECT mqtt_host, mqtt_port FROM remote_sync_envs WHERE id = ?1 LIMIT 1")
+            .ok();
+
+        if let Some(ref mut stmt) = stmt {
+            let result = stmt
+                .query_row(rusqlite::params![env_id], |row| {
+                    let host: Option<String> = row.get(0)?;
+                    let port: Option<i64> = row.get(1)?;
+                    Ok((host, port))
+                })
+                .optional();
+
+            if let Ok(Some((mqtt_host, mqtt_port))) = result {
+                if let Some(host) = mqtt_host {
+                    req.master_mqtt_host = Some(host);
+                    req.master_mqtt_port = mqtt_port.map(|p| p as u16).or(Some(1883));
+                }
+            }
+        }
+
+        // 如果环境配置中没有，使用当前站点的MQTT配置
+        if req.master_mqtt_host.is_none() {
+            use aios_core::get_db_option;
+            let db_option = get_db_option();
+            req.master_mqtt_host = Some(db_option.mqtt_host.clone());
+            req.master_mqtt_port = Some(db_option.mqtt_port);
+        }
+    }
+
+    // 1. 先保存到主节点数据库
+    let req_clone = SiteCreateRequest {
+        name: req.name.clone(),
+        location: req.location.clone(),
+        http_host: req.http_host.clone(),
+        dbnums: req.dbnums.clone(),
+        notes: req.notes.clone(),
+        master_mqtt_host: req.master_mqtt_host.clone(),
+        master_mqtt_port: req.master_mqtt_port,
+    };
+    let site_id = match create_site_internal(&env_id, req_clone).await {
+        Ok(id) => id,
+        Err(e) => {
+            eprintln!("创建站点失败: {}", e);
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        }
+    };
+
+    // 2. 如果是从节点且有 http_host，同步回调从节点保存数据
+    if let Some(http_host) = &req.http_host {
+        // 获取完整的站点信息
+        let conn = match open_sqlite() {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("打开数据库失败，无法同步到从节点: {}", e);
+                return Ok(Json(json!({
+                    "status": "partial_success",
+                    "id": site_id,
+                    "message": "站点已在主节点创建，但同步到从节点失败（数据库打开失败）",
+                    "warning": "从节点数据可能不完整"
+                })));
+            }
+        };
+
+        // 查询刚创建的站点信息
+        let site_info: Option<RemoteSyncSite> = conn.query_row(
+            "SELECT id, env_id, name, location, http_host, dbnums, notes, master_mqtt_host, master_mqtt_port, created_at, updated_at 
+             FROM remote_sync_sites WHERE id = ?1",
+            rusqlite::params![site_id],
+            |row| {
+                Ok(RemoteSyncSite {
+                    id: row.get(0)?,
+                    env_id: row.get(1)?,
+                    name: row.get(2)?,
+                    location: row.get(3)?,
+                    http_host: row.get(4)?,
+                    dbnums: row.get(5)?,
+                    notes: row.get(6)?,
+                    master_mqtt_host: row.get(7)?,
+                    master_mqtt_port: row.get(8).ok().flatten().map(|p: i64| p as u16),
+                    created_at: row.get(9)?,
+                    updated_at: row.get(10)?,
+                })
+            }
+        ).ok();
+
+        if let Some(site) = site_info {
+            // 获取环境信息
+            let env_info: Option<RemoteSyncEnv> = conn.query_row(
+                "SELECT id, name, mqtt_host, mqtt_port, file_server_host, location, location_dbs, reconnect_initial_ms, reconnect_max_ms, created_at, updated_at 
+                 FROM remote_sync_envs WHERE id = ?1",
+                rusqlite::params![site.env_id],
+                |row| {
+                    Ok(RemoteSyncEnv {
+                        id: row.get(0)?,
+                        name: row.get(1)?,
+                        mqtt_host: row.get(2).ok(),
+                        mqtt_port: row.get(3).ok().flatten().map(|p: i64| p as u16),
+                        file_server_host: row.get(4).ok(),
+                        location: row.get(5).ok(),
+                        location_dbs: row.get(6).ok(),
+                        reconnect_initial_ms: row.get(7).ok().flatten().map(|p: i64| p as u64),
+                        reconnect_max_ms: row.get(8).ok().flatten().map(|p: i64| p as u64),
+                        created_at: row.get(9)?,
+                        updated_at: row.get(10)?,
+                    })
+                }
+            ).ok();
+            
+            // 同步调用从节点 API，等待确认保存成功
+            match sync_site_to_slave(&site, env_info.as_ref(), http_host).await {
+                Ok(_) => {
+                    log::info!("站点已成功同步到从节点: {}", http_host);
+                    Ok(Json(json!({
+                        "status": "success",
+                        "id": site_id,
+                        "message": "站点创建成功，已同步到从节点"
+                    })))
+                }
+                Err(e) => {
+                    eprintln!("同步站点到从节点失败: {}", e);
+                    // 从节点保存失败，但主节点已保存，返回部分成功
+                    Ok(Json(json!({
+                        "status": "partial_success",
+                        "id": site_id,
+                        "message": format!("站点已在主节点创建，但同步到从节点失败: {}", e),
+                        "warning": "从节点数据可能不完整，请手动同步"
+                    })))
+                }
+            }
+        } else {
+            // 无法获取站点信息，返回部分成功
+            Ok(Json(json!({
+                "status": "partial_success",
+                "id": site_id,
+                "message": "站点已在主节点创建，但无法获取完整信息同步到从节点",
+                "warning": "从节点数据可能不完整"
+            })))
+        }
+    } else {
+        // 没有 http_host，只保存到主节点
+        Ok(Json(json!({
+            "status": "success",
+            "id": site_id,
+            "message": "站点创建成功（仅主节点）"
+        })))
+    }
 }
 
 pub async fn update_site(
@@ -459,7 +602,7 @@ pub async fn update_site(
     let now = chrono::Utc::now().to_rfc3339();
     let changed = conn
         .execute(
-            "UPDATE remote_sync_sites SET name = ?2, location = ?3, http_host = ?4, dbnums = ?5, notes = ?6, updated_at = ?7 WHERE id = ?1",
+            "UPDATE remote_sync_sites SET name = ?2, location = ?3, http_host = ?4, dbnums = ?5, notes = ?6, master_mqtt_host = ?7, master_mqtt_port = ?8, updated_at = ?9 WHERE id = ?1",
             rusqlite::params![
                 site_id,
                 req.name,
@@ -467,6 +610,8 @@ pub async fn update_site(
                 req.http_host,
                 req.dbnums,
                 req.notes,
+                req.master_mqtt_host,
+                req.master_mqtt_port.map(|x| x as i64),
                 now,
             ],
         )
@@ -513,7 +658,7 @@ pub async fn apply_env(Path(id): Path<String>) -> Result<Json<serde_json::Value>
     let mqtt_host: Option<String> = row.get(1).ok();
     let mqtt_port_opt: Option<i64> = row.get(2).ok().flatten();
     let file_server_host: Option<String> = row.get(3).ok();
-    let location: Option<String> = row.get(4).ok();
+    // 保留本地站点的 location，避免从站被误改为主站位置
     let location_dbs: Option<String> = row.get(5).ok();
 
     let path = std::path::Path::new("DbOption.toml");
@@ -586,10 +731,6 @@ pub async fn apply_env(Path(id): Path<String>) -> Result<Json<serde_json::Value>
     if let Some(fs) = file_server_host.as_deref() {
         set_str(&mut content, "file_server_host", fs);
     }
-    if let Some(loc) = location.as_deref() {
-        set_str(&mut content, "location", loc);
-    }
-
     if let Some(dbs_str) = location_dbs.as_deref() {
         let vals: Vec<u32> = dbs_str
             .split(|c| c == ',' || c == ' ')
@@ -727,15 +868,13 @@ pub async fn test_http_env(Path(id): Path<String>) -> Result<Json<serde_json::Va
 }
 
 /// 测试外部站点 HTTP Host
-pub async fn test_http_site(
-    Path(site_id): Path<String>,
-) -> Result<Json<serde_json::Value>, StatusCode> {
+pub async fn test_http_site(Path(id): Path<String>) -> Result<Json<serde_json::Value>, StatusCode> {
     let conn = open_sqlite().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let mut stmt = conn
         .prepare("SELECT http_host FROM remote_sync_sites WHERE id = ?1 LIMIT 1")
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let mut rows = stmt
-        .query(rusqlite::params![site_id])
+        .query(rusqlite::params![id])
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let row = match rows.next() {
         Ok(Some(r)) => r,
@@ -1473,7 +1612,7 @@ pub async fn list_all_envs() -> anyhow::Result<Vec<RemoteSyncEnv>> {
 pub async fn list_all_sites() -> anyhow::Result<Vec<RemoteSyncSite>> {
     let conn = open_sqlite().map_err(|e| anyhow::anyhow!("打开数据库失败: {}", e))?;
     let mut stmt = conn.prepare(
-        "SELECT id, env_id, name, location, http_host, dbnums, notes, created_at, updated_at 
+        "SELECT id, env_id, name, location, http_host, dbnums, notes, master_mqtt_host, master_mqtt_port, created_at, updated_at 
          FROM remote_sync_sites 
          ORDER BY created_at DESC",
     )?;
@@ -1488,8 +1627,10 @@ pub async fn list_all_sites() -> anyhow::Result<Vec<RemoteSyncSite>> {
                 http_host: row.get(4)?,
                 dbnums: row.get(5)?,
                 notes: row.get(6)?,
-                created_at: row.get(7)?,
-                updated_at: row.get(8)?,
+                master_mqtt_host: row.get(7)?,
+                master_mqtt_port: row.get(8).ok().flatten().map(|p: i64| p as u16),
+                created_at: row.get(9)?,
+                updated_at: row.get(10)?,
             })
         })?
         .collect::<Result<Vec<_>, _>>()?;
@@ -1556,4 +1697,872 @@ pub async fn delete_all_sites() -> anyhow::Result<()> {
     let conn = open_sqlite().map_err(|e| anyhow::anyhow!("打开数据库失败: {}", e))?;
     conn.execute("DELETE FROM remote_sync_sites", [])?;
     Ok(())
+}
+
+// ===== 批量导入 =====
+
+/// 批量导入请求体
+#[derive(Debug, Deserialize)]
+pub struct BatchImportRequest {
+    /// 环境配置列表
+    pub environments: Vec<EnvCreateRequest>,
+    /// 站点配置列表（包含 env_name 关联到环境）
+    pub sites: Vec<SiteBatchCreateRequest>,
+}
+
+/// 站点批量创建请求（带 env_name 字段）
+#[derive(Debug, Deserialize)]
+pub struct SiteBatchCreateRequest {
+    /// 关联的环境名称（而非 env_id）
+    pub env_name: String,
+    pub name: String,
+    pub location: Option<String>,
+    pub http_host: Option<String>,
+    pub dbnums: Option<String>,
+    pub notes: Option<String>,
+}
+
+/// 批量导入响应
+#[derive(Debug, Serialize)]
+pub struct BatchImportResponse {
+    pub status: String,
+    pub created_envs: usize,
+    pub created_sites: usize,
+    pub skipped_envs: usize,
+    pub skipped_sites: usize,
+    pub errors: Vec<String>,
+}
+
+/// 批量导入环境和站点
+pub async fn batch_import(
+    Json(req): Json<BatchImportRequest>,
+) -> Result<Json<BatchImportResponse>, (StatusCode, Json<BatchImportResponse>)> {
+    let mut created_envs = 0;
+    let mut created_sites = 0;
+    let mut skipped_envs = 0;
+    let mut skipped_sites = 0;
+    let mut errors = Vec::new();
+
+    // 环境名称 -> env_id 映射
+    let mut env_name_to_id = std::collections::HashMap::new();
+
+    // 1. 批量创建环境
+    for env_req in req.environments {
+        match create_env_internal(env_req.clone()).await {
+            Ok(env_id) => {
+                env_name_to_id.insert(env_req.name.clone(), env_id);
+                created_envs += 1;
+            }
+            Err(e) => {
+                if e.contains("UNIQUE constraint failed") {
+                    // 环境已存在，尝试查询 env_id
+                    match get_env_id_by_name(&env_req.name).await {
+                        Ok(env_id) => {
+                            env_name_to_id.insert(env_req.name.clone(), env_id);
+                            skipped_envs += 1;
+                        }
+                        Err(query_err) => {
+                            errors.push(format!("环境 '{}' 创建失败: {}", env_req.name, query_err));
+                        }
+                    }
+                } else {
+                    errors.push(format!("环境 '{}' 创建失败: {}", env_req.name, e));
+                }
+            }
+        }
+    }
+
+    // 2. 批量创建站点
+    for site_req in req.sites {
+        // 根据 env_name 查找 env_id
+        let env_id = match env_name_to_id.get(&site_req.env_name) {
+            Some(id) => id.clone(),
+            None => {
+                errors.push(format!(
+                    "站点 '{}' 关联的环境 '{}' 不存在或创建失败",
+                    site_req.name, site_req.env_name
+                ));
+                skipped_sites += 1;
+                continue;
+            }
+        };
+
+        // 创建站点
+        let site_create_req = SiteCreateRequest {
+            name: site_req.name.clone(),
+            location: site_req.location.clone(),
+            http_host: site_req.http_host.clone(),
+            dbnums: site_req.dbnums.clone(),
+            notes: site_req.notes.clone(),
+            master_mqtt_host: None,
+            master_mqtt_port: None,
+        };
+
+        match create_site_internal(&env_id, site_create_req).await {
+            Ok(_) => created_sites += 1,
+            Err(e) => {
+                if e.contains("UNIQUE constraint failed") {
+                    skipped_sites += 1;
+                } else {
+                    errors.push(format!("站点 '{}' 创建失败: {}", site_req.name, e));
+                }
+            }
+        }
+    }
+
+    let response = BatchImportResponse {
+        status: if errors.is_empty() {
+            "success".to_string()
+        } else {
+            "partial_success".to_string()
+        },
+        created_envs,
+        created_sites,
+        skipped_envs,
+        skipped_sites,
+        errors,
+    };
+
+    if response.status == "success" || response.status == "partial_success" {
+        Ok(Json(response))
+    } else {
+        Err((StatusCode::BAD_REQUEST, Json(response)))
+    }
+}
+
+/// 内部函数：创建环境（返回 env_id）
+async fn create_env_internal(req: EnvCreateRequest) -> Result<String, String> {
+    if req.name.trim().is_empty() {
+        return Err("环境名称不能为空".to_string());
+    }
+    let conn = open_sqlite().map_err(|e| format!("数据库连接失败: {}", e))?;
+    let id = Uuid::new_v4().to_string();
+    let now = chrono::Utc::now().to_rfc3339();
+    conn.execute(
+        "INSERT INTO remote_sync_envs (id, name, mqtt_host, mqtt_port, file_server_host, location, location_dbs, reconnect_initial_ms, reconnect_max_ms, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?10)",
+        rusqlite::params![
+            id,
+            req.name,
+            req.mqtt_host,
+            req.mqtt_port.map(|x| x as i64),
+            req.file_server_host,
+            req.location,
+            req.location_dbs,
+            req.reconnect_initial_ms.map(|v| v as i64),
+            req.reconnect_max_ms.map(|v| v as i64),
+            now,
+        ],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(id)
+}
+
+/// 内部函数：根据环境名称查询 env_id
+async fn get_env_id_by_name(name: &str) -> Result<String, String> {
+    let conn = open_sqlite().map_err(|e| format!("数据库连接失败: {}", e))?;
+    let mut stmt = conn
+        .prepare("SELECT id FROM remote_sync_envs WHERE name = ?1 LIMIT 1")
+        .map_err(|e| format!("查询失败: {}", e))?;
+    let id = stmt
+        .query_row(rusqlite::params![name], |row| row.get::<_, String>(0))
+        .map_err(|e| format!("环境不存在: {}", e))?;
+    Ok(id)
+}
+
+/// 内部函数：创建站点
+async fn create_site_internal(env_id: &str, req: SiteCreateRequest) -> Result<String, String> {
+    if req.name.trim().is_empty() {
+        return Err("站点名称不能为空".to_string());
+    }
+    let conn = open_sqlite().map_err(|e| format!("数据库连接失败: {}", e))?;
+    
+    // 检查是否已存在相同 location 或 http_host 的站点
+    let existing_site: Option<String> = if let Some(location) = &req.location {
+        // 优先按 location 查找
+        conn.query_row(
+            "SELECT id FROM remote_sync_sites WHERE location = ?1 LIMIT 1",
+            rusqlite::params![location],
+            |row| row.get::<_, String>(0),
+        ).ok()
+    } else if let Some(http_host) = &req.http_host {
+        // 如果没有 location，按 http_host 查找
+        conn.query_row(
+            "SELECT id FROM remote_sync_sites WHERE http_host = ?1 LIMIT 1",
+            rusqlite::params![http_host],
+            |row| row.get::<_, String>(0),
+        ).ok()
+    } else {
+        None
+    };
+    
+    let now = chrono::Utc::now().to_rfc3339();
+    
+    if let Some(existing_id) = existing_site {
+        // 站点已存在，更新记录
+        conn.execute(
+            "UPDATE remote_sync_sites 
+             SET env_id = ?2, name = ?3, location = ?4, http_host = ?5, dbnums = ?6, notes = ?7, 
+                 master_mqtt_host = ?8, master_mqtt_port = ?9, updated_at = ?10
+             WHERE id = ?1",
+            rusqlite::params![
+                existing_id,
+                env_id,
+                req.name,
+                req.location,
+                req.http_host,
+                req.dbnums,
+                req.notes,
+                req.master_mqtt_host,
+                req.master_mqtt_port.map(|x| x as i64),
+                now,
+            ],
+        )
+        .map_err(|e| format!("更新站点失败: {}", e))?;
+        log::info!("站点已存在，已更新: {} (location: {:?}, http_host: {:?})", existing_id, req.location, req.http_host);
+        Ok(existing_id)
+    } else {
+        // 创建新站点
+        let id = Uuid::new_v4().to_string();
+        conn.execute(
+            "INSERT INTO remote_sync_sites (id, env_id, name, location, http_host, dbnums, notes, master_mqtt_host, master_mqtt_port, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?10)",
+            rusqlite::params![
+                id,
+                env_id,
+                req.name,
+                req.location,
+                req.http_host,
+                req.dbnums,
+                req.notes,
+                req.master_mqtt_host,
+                req.master_mqtt_port.map(|x| x as i64),
+                now,
+            ],
+        )
+        .map_err(|e| format!("创建站点失败: {}", e))?;
+        Ok(id)
+    }
+}
+
+// ===== 站点配置导出/导入 =====
+
+/// 站点自身配置信息（供其他站点导入）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SiteExportConfig {
+    /// 站点版本
+    pub version: String,
+    /// 站点名称
+    pub name: String,
+    /// 站点位置标识
+    pub location: String,
+    /// HTTP 服务地址（用于下载 CBA 文件）
+    pub file_server_host: String,
+    /// MQTT 主机
+    pub mqtt_host: String,
+    /// MQTT 端口
+    pub mqtt_port: u16,
+    /// 该站点负责的数据库编号（逗号分隔）
+    pub location_dbs: String,
+    /// 站点 HTTP API 地址
+    pub api_host: Option<String>,
+    /// 描述
+    pub description: Option<String>,
+    /// 生成时间
+    pub generated_at: String,
+}
+
+/// 导出本站点配置（供其他站点通过 URL 导入）
+/// GET /api/site-config/export
+pub async fn export_site_config() -> Result<Json<SiteExportConfig>, (StatusCode, String)> {
+    use aios_core::get_db_option;
+
+    let db_option = get_db_option();
+
+    // 构建配置信息
+    let config = SiteExportConfig {
+        version: "1.0".to_string(),
+        name: db_option.project_name.clone(),
+        location: db_option.location.clone(),
+        file_server_host: db_option.file_server_host.clone(),
+        mqtt_host: db_option.mqtt_host.clone(),
+        mqtt_port: db_option.mqtt_port,
+        location_dbs: db_option
+            .location_dbs
+            .as_ref()
+            .map(|v: &Vec<u32>| {
+                v.iter()
+                    .map(|n| n.to_string())
+                    .collect::<Vec<_>>()
+                    .join(",")
+            })
+            .unwrap_or_default(),
+        api_host: Some(format!("http://{}:{}", "localhost", 8080)), // 可从配置读取
+        description: Some(format!("站点 {} 的配置导出", db_option.location)),
+        generated_at: chrono::Utc::now().to_rfc3339(),
+    };
+
+    Ok(Json(config))
+}
+
+/// 从远程 URL 导入站点配置请求
+#[derive(Debug, Deserialize)]
+pub struct ImportFromUrlRequest {
+    /// 远程站点的配置导出 URL（如 http://192.168.1.100:8080/api/site-config/export）
+    pub url: String,
+    /// 可选：覆盖环境名称
+    pub env_name: Option<String>,
+    /// 可选：覆盖站点名称
+    pub site_name: Option<String>,
+}
+
+/// 从远程 URL 导入站点配置
+/// POST /api/remote-sync/import-from-url
+pub async fn import_site_from_url(
+    Json(req): Json<ImportFromUrlRequest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    // 1. 从远程 URL 获取配置
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({
+                    "status": "error",
+                    "message": format!("创建 HTTP 客户端失败: {}", e)
+                })),
+            )
+        })?;
+
+    let response = client.get(&req.url).send().await.map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "status": "error",
+                "message": format!("无法连接到远程站点: {}", e)
+            })),
+        )
+    })?;
+
+    if !response.status().is_success() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "status": "error",
+                "message": format!("远程站点返回错误: {}", response.status())
+            })),
+        ));
+    }
+
+    let remote_config: SiteExportConfig = response.json().await.map_err(|e| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "status": "error",
+                "message": format!("解析远程配置失败: {}", e)
+            })),
+        )
+    })?;
+
+    // 2. 创建环境（如果不存在）
+    let env_name = req
+        .env_name
+        .unwrap_or_else(|| format!("{}环境", remote_config.location));
+    let env_req = EnvCreateRequest {
+        name: env_name.clone(),
+        mqtt_host: Some(remote_config.mqtt_host.clone()),
+        mqtt_port: Some(remote_config.mqtt_port),
+        file_server_host: Some(remote_config.file_server_host.clone()),
+        location: Some(remote_config.location.clone()),
+        location_dbs: Some(remote_config.location_dbs.clone()),
+        reconnect_initial_ms: Some(5000),
+        reconnect_max_ms: Some(60000),
+    };
+
+    let env_id = match create_env_internal(env_req).await {
+        Ok(id) => id,
+        Err(e) => {
+            if e.contains("UNIQUE constraint failed") {
+                // 环境已存在，获取 ID
+                get_env_id_by_name(&env_name).await.map_err(|e| {
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(json!({
+                            "status": "error",
+                            "message": format!("获取已存在环境失败: {}", e)
+                        })),
+                    )
+                })?
+            } else {
+                return Err((
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({
+                        "status": "error",
+                        "message": format!("创建环境失败: {}", e)
+                    })),
+                ));
+            }
+        }
+    };
+
+    // 3. 创建站点
+    let site_name = req
+        .site_name
+        .unwrap_or_else(|| format!("{}-node", remote_config.location));
+    let site_req = SiteCreateRequest {
+        name: site_name.clone(),
+        location: Some(remote_config.location.clone()),
+        http_host: remote_config.api_host.clone(),
+        dbnums: Some(remote_config.location_dbs.clone()),
+        notes: Some(format!("从 {} 导入", req.url)),
+        // 导入时，远程站点的 mqtt_host 就是主节点地址
+        master_mqtt_host: Some(remote_config.mqtt_host.clone()),
+        master_mqtt_port: Some(remote_config.mqtt_port),
+    };
+
+    let site_id = match create_site_internal(&env_id, site_req).await {
+        Ok(id) => id,
+        Err(e) => {
+            if e.contains("UNIQUE constraint failed") {
+                return Ok(Json(json!({
+                    "status": "success",
+                    "message": "站点已存在，跳过创建",
+                    "env_id": env_id,
+                    "env_name": env_name,
+                    "site_name": site_name,
+                    "skipped": true
+                })));
+            } else {
+                return Err((
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(json!({
+                        "status": "error",
+                        "message": format!("创建站点失败: {}", e)
+                    })),
+                ));
+            }
+        }
+    };
+
+    Ok(Json(json!({
+        "status": "success",
+        "message": "站点导入成功",
+        "env_id": env_id,
+        "env_name": env_name,
+        "site_id": site_id,
+        "site_name": site_name,
+        "remote_config": remote_config
+    })))
+}
+
+/// 同步站点信息到从节点（同步回调，等待确认）
+async fn sync_site_to_slave(
+    site: &RemoteSyncSite,
+    env: Option<&RemoteSyncEnv>,
+    http_host: &str,
+) -> anyhow::Result<()> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10)) // 增加超时时间，确保有足够时间保存
+        .build()?;
+    
+    let url = format!("{}/api/remote-sync/sync-site", http_host.trim_end_matches('/'));
+    
+    // 获取主节点的 location（当前站点的 location）
+    use aios_core::get_db_option;
+    let db_option = get_db_option();
+    let master_location = db_option.location.clone();
+    
+    // 构建请求体，包含站点信息和环境信息
+    let mut request_body = json!({
+        "id": site.id,
+        "env_id": site.env_id,
+        "name": site.name,
+        "location": site.location,
+        "http_host": site.http_host,
+        "dbnums": site.dbnums,
+        "notes": site.notes,
+        "master_location": master_location,
+        "master_mqtt_host": site.master_mqtt_host,
+        "master_mqtt_port": site.master_mqtt_port,
+        "created_at": site.created_at,
+        "updated_at": site.updated_at,
+    });
+    
+    // 如果环境信息存在，添加到请求体中
+    if let Some(env_info) = env {
+        request_body["env"] = json!({
+            "id": env_info.id,
+            "name": env_info.name,
+            "mqtt_host": env_info.mqtt_host,
+            "mqtt_port": env_info.mqtt_port,
+            "file_server_host": env_info.file_server_host,
+            "location": env_info.location,
+            "location_dbs": env_info.location_dbs,
+            "reconnect_initial_ms": env_info.reconnect_initial_ms,
+            "reconnect_max_ms": env_info.reconnect_max_ms,
+            "created_at": env_info.created_at,
+            "updated_at": env_info.updated_at,
+        });
+    }
+    
+    let response = client
+        .post(&url)
+        .json(&request_body)
+        .send()
+        .await
+        .map_err(|e| anyhow::anyhow!("无法连接到从节点 {}: {}", http_host, e))?;
+    
+    if !response.status().is_success() {
+        let status = response.status();
+        let text = response.text().await.unwrap_or_default();
+        anyhow::bail!("从节点返回错误: HTTP {} - {}", status, text);
+    }
+    
+    // 验证响应，确保从节点确认保存成功
+    let response_json: serde_json::Value = response.json().await
+        .map_err(|e| anyhow::anyhow!("解析从节点响应失败: {}", e))?;
+    
+    let status = response_json.get("status")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown");
+    
+    if status != "success" {
+        let message = response_json.get("message")
+            .and_then(|v| v.as_str())
+            .unwrap_or("未知错误");
+        anyhow::bail!("从节点保存失败: {}", message);
+    }
+    
+    log::info!("站点已成功同步到从节点: {} (站点: {})", http_host, site.name);
+    Ok(())
+}
+
+/// API: 从节点接收完整的站点信息同步
+/// POST /api/remote-sync/sync-site
+pub async fn sync_site_api(
+    Json(req): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    use aios_core::get_db_option;
+    let db_option = get_db_option();
+    let current_location = db_option.location.clone();
+    
+    let site_id = req.get("id")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| {
+            eprintln!("缺少 id 参数");
+            StatusCode::BAD_REQUEST
+        })?;
+    
+    let env_id = req.get("env_id")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| {
+            eprintln!("缺少 env_id 参数");
+            StatusCode::BAD_REQUEST
+        })?;
+    
+    let name = req.get("name")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| {
+            eprintln!("缺少 name 参数");
+            StatusCode::BAD_REQUEST
+        })?;
+    
+    let location = req.get("location")
+        .and_then(|v| v.as_str());
+    
+    let http_host = req.get("http_host").and_then(|v| v.as_str());
+    let dbnums = req.get("dbnums").and_then(|v| v.as_str());
+    let notes = req.get("notes").and_then(|v| v.as_str());
+    let master_location = req.get("master_location")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .filter(|s| !s.is_empty() && s != "unknown");
+    let master_mqtt_host = req.get("master_mqtt_host").and_then(|v| v.as_str());
+    let master_mqtt_port = req.get("master_mqtt_port")
+        .and_then(|v| v.as_u64())
+        .map(|p| p as u16)
+        .unwrap_or(1883);
+    
+    let created_at = req.get("created_at")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| chrono::Utc::now().to_rfc3339());
+    let updated_at = req.get("updated_at")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| chrono::Utc::now().to_rfc3339());
+    
+    // 验证 location 是否匹配当前站点
+    if let Some(loc) = location {
+        if loc != current_location {
+            return Ok(Json(json!({
+                "status": "ignored",
+                "message": format!("站点位置不匹配: 期望 {}, 收到 {}", current_location, loc)
+            })));
+        }
+    }
+    
+    let conn = open_sqlite().map_err(|e| {
+        eprintln!("打开数据库失败: {}", e);
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+    
+    // 检查环境是否存在，如果不存在则创建环境（优先使用请求中的环境信息）
+    let env_exists: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM remote_sync_envs WHERE id = ?1)",
+        rusqlite::params![env_id],
+        |row| row.get(0),
+    ).unwrap_or(false);
+    
+    if !env_exists {
+        // 环境不存在，尝试从请求中获取环境信息，否则创建默认环境
+        if let Some(env_data) = req.get("env").and_then(|v| v.as_object()) {
+            // 使用请求中的环境信息创建环境
+            let env_name = env_data.get("name")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| format!("环境-{}", env_id.chars().take(8).collect::<String>()));
+            let env_mqtt_host = env_data.get("mqtt_host").and_then(|v| v.as_str());
+            let env_mqtt_port = env_data.get("mqtt_port")
+                .and_then(|v| v.as_u64())
+                .map(|p| p as i64)
+                .unwrap_or(master_mqtt_port as i64);
+            let env_file_server_host = env_data.get("file_server_host").and_then(|v| v.as_str());
+            let env_location = env_data.get("location").and_then(|v| v.as_str());
+            let env_location_dbs = env_data.get("location_dbs").and_then(|v| v.as_str());
+            let env_reconnect_initial_ms = env_data.get("reconnect_initial_ms")
+                .and_then(|v| v.as_u64())
+                .map(|p| p as i64)
+                .unwrap_or(5000);
+            let env_reconnect_max_ms = env_data.get("reconnect_max_ms")
+                .and_then(|v| v.as_u64())
+                .map(|p| p as i64)
+                .unwrap_or(60000);
+            let env_created_at = env_data.get("created_at")
+                .and_then(|v| v.as_str())
+                .unwrap_or_else(|| &created_at);
+            let env_updated_at = env_data.get("updated_at")
+                .and_then(|v| v.as_str())
+                .unwrap_or_else(|| &updated_at);
+            
+            if let Err(e) = conn.execute(
+                "INSERT INTO remote_sync_envs (id, name, mqtt_host, mqtt_port, file_server_host, location, location_dbs, reconnect_initial_ms, reconnect_max_ms, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                rusqlite::params![
+                    env_id,
+                    env_name,
+                    env_mqtt_host,
+                    env_mqtt_port,
+                    env_file_server_host,
+                    env_location,
+                    env_location_dbs,
+                    env_reconnect_initial_ms,
+                    env_reconnect_max_ms,
+                    env_created_at,
+                    env_updated_at,
+                ],
+            ) {
+                eprintln!("创建环境失败: {}", e);
+                return Err(StatusCode::INTERNAL_SERVER_ERROR);
+            }
+            log::info!("从节点已创建环境: {} ({})", env_id, env_name);
+        } else {
+            // 没有环境信息，创建默认环境
+            let env_name = format!("默认环境-{}", env_id.chars().take(8).collect::<String>());
+            let now = chrono::Utc::now().to_rfc3339();
+            if let Err(e) = conn.execute(
+                "INSERT INTO remote_sync_envs (id, name, mqtt_host, mqtt_port, file_server_host, location, location_dbs, reconnect_initial_ms, reconnect_max_ms, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?10)",
+                rusqlite::params![
+                    env_id,
+                    env_name,
+                    master_mqtt_host,
+                    master_mqtt_port as i64,
+                    http_host,
+                    location,
+                    dbnums,
+                    5000i64,  // reconnect_initial_ms
+                    60000i64, // reconnect_max_ms
+                    now,
+                ],
+            ) {
+                eprintln!("创建默认环境失败: {}", e);
+                return Err(StatusCode::INTERNAL_SERVER_ERROR);
+            }
+            log::info!("从节点已创建默认环境: {}", env_id);
+        }
+    }
+    
+    // 检查是否已存在相同 location 或 http_host 的站点
+    let existing_site_id: Option<String> = if let Some(loc) = location {
+        // 优先按 location 查找
+        conn.query_row(
+            "SELECT id FROM remote_sync_sites WHERE location = ?1 LIMIT 1",
+            rusqlite::params![loc],
+            |row| row.get::<_, String>(0),
+        ).ok()
+    } else if let Some(host) = http_host {
+        // 如果没有 location，按 http_host 查找
+        conn.query_row(
+            "SELECT id FROM remote_sync_sites WHERE http_host = ?1 LIMIT 1",
+            rusqlite::params![host],
+            |row| row.get::<_, String>(0),
+        ).ok()
+    } else {
+        None
+    };
+    
+    let updated = if let Some(existing_id) = existing_site_id {
+        // 站点已存在，更新记录（使用已存在的 id）
+        conn.execute(
+            "UPDATE remote_sync_sites 
+             SET env_id = ?2, name = ?3, location = ?4, http_host = ?5, dbnums = ?6, notes = ?7, 
+                 master_location = ?8, master_mqtt_host = ?9, master_mqtt_port = ?10, updated_at = ?11
+             WHERE id = ?1",
+            rusqlite::params![
+                existing_id,
+                env_id,
+                name,
+                location,
+                http_host,
+                dbnums,
+                notes,
+                master_location,
+                master_mqtt_host,
+                master_mqtt_port as i64,
+                updated_at.as_str(),
+            ],
+        ).map_err(|e| {
+            eprintln!("更新站点信息失败: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?
+    } else {
+        // 站点不存在，创建新记录
+        conn.execute(
+            "INSERT INTO remote_sync_sites 
+             (id, env_id, name, location, http_host, dbnums, notes, master_location, master_mqtt_host, master_mqtt_port, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+            rusqlite::params![
+                site_id,
+                env_id,
+                name,
+                location,
+                http_host,
+                dbnums,
+                notes,
+                master_location,
+                master_mqtt_host,
+                master_mqtt_port as i64,
+                created_at.as_str(),
+                updated_at.as_str(),
+            ],
+        ).map_err(|e| {
+            eprintln!("同步站点信息失败: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?
+    };
+    
+    log::info!("从节点 {} 已同步站点信息: {} ({} 条记录)", current_location, name, updated);
+    
+    Ok(Json(json!({
+        "status": "success",
+        "message": format!("站点信息已同步: {}", name),
+        "location": current_location,
+        "site_id": site_id,
+        "name": name,
+    })))
+}
+
+/// API: 从节点接收主节点配置更新通知（保留用于向后兼容）
+/// POST /api/remote-sync/update-master-config
+pub async fn update_master_config_api(
+    Json(req): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    use aios_core::get_db_option;
+    let db_option = get_db_option();
+    let location = db_option.location.clone();
+    
+    let master_mqtt_host = req.get("master_mqtt_host")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| {
+            eprintln!("缺少 master_mqtt_host 参数");
+            StatusCode::BAD_REQUEST
+        })?;
+    
+    let master_mqtt_port = req.get("master_mqtt_port")
+        .and_then(|v| v.as_u64())
+        .map(|p| p as u16)
+        .unwrap_or(1883);
+    
+    // 尝试获取 master_location（如果提供）
+    // 注意：拒绝 'unknown' 或空字符串作为 master_location
+    let master_location = req.get("master_location")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .filter(|s| !s.is_empty() && s != "unknown");
+    
+    let conn = open_sqlite().map_err(|e| {
+        eprintln!("打开数据库失败: {}", e);
+        StatusCode::INTERNAL_SERVER_ERROR
+    })?;
+    
+    // 更新或插入站点记录
+    // 如果提供了有效的 master_location，同时更新它；否则只更新 host 和 port
+    let updated = if let Some(master_loc) = master_location {
+        conn.execute(
+            "UPDATE remote_sync_sites SET master_location = ?1, master_mqtt_host = ?2, master_mqtt_port = ?3, updated_at = datetime('now') WHERE location = ?4",
+            rusqlite::params![master_loc, master_mqtt_host, master_mqtt_port as i64, location],
+        ).map_err(|e| {
+            eprintln!("更新站点配置失败: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?
+    } else {
+        // 如果没有提供有效的 master_location，只更新 host 和 port（不更新 master_location）
+        conn.execute(
+            "UPDATE remote_sync_sites SET master_mqtt_host = ?1, master_mqtt_port = ?2, updated_at = datetime('now') WHERE location = ?3",
+            rusqlite::params![master_mqtt_host, master_mqtt_port as i64, location],
+        ).map_err(|e| {
+            eprintln!("更新站点配置失败: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR
+        })?
+    };
+    
+    if updated == 0 {
+        // 如果没有更新任何记录，尝试插入新记录
+        // 先获取一个 env_id
+        let env_id = conn.query_row(
+            "SELECT id FROM remote_sync_envs LIMIT 1",
+            [],
+            |row| row.get::<_, String>(0),
+        ).ok();
+        
+        if let Some(eid) = env_id {
+            let site_id = uuid::Uuid::new_v4().to_string();
+            let now = chrono::Utc::now().to_rfc3339();
+            let _ = conn.execute(
+                "INSERT INTO remote_sync_sites (id, env_id, name, location, master_mqtt_host, master_mqtt_port, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)",
+                rusqlite::params![
+                    site_id,
+                    eid,
+                    format!("Site-{}", location),
+                    location,
+                    master_mqtt_host,
+                    master_mqtt_port as i64,
+                    now,
+                ],
+            );
+        }
+    }
+    
+    log::info!("从节点 {} 已更新主节点配置: {}:{}", location, master_mqtt_host, master_mqtt_port);
+    
+    Ok(Json(json!({
+        "status": "success",
+        "message": format!("主节点配置已更新: {}:{}", master_mqtt_host, master_mqtt_port),
+        "location": location,
+        "master_mqtt_host": master_mqtt_host,
+        "master_mqtt_port": master_mqtt_port,
+    })))
 }

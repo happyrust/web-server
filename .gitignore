@@ -13,6 +13,9 @@ mqtt-server.exe
 simple-http-server.exe
 simple_grpc
 
+# Configuration files with sensitive data
+DbOption.toml
+
 
 frontend/v0-aios-database-management/.next
 frontend/v0-aios-database-management/node_modules
@@ -129,10 +132,11 @@ scripts/db/ams-demo.db/
 data/test_db/
 
 # Specific large binaries
-web_server
-aios-database
+/web_server
+/aios-database
 
 # Lock files (optional - uncomment if you want to ignore them)
 # Cargo.lock
 # package-lock.json
-# pnpm-lock.yaml
+# pnpm-lock.yamlremote-test-dir/test-real/site-*/AvevaMarineSample/ams000/*
+nul 

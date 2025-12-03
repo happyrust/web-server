@@ -138,7 +138,7 @@ check_status() {
         
         # 检查命名空间和数据库
         echo -e "${YELLOW}检查连接...${NC}"
-        echo "SELECT 1;" | surreal sql -e "http://${CHECK_HOST}:${CHECK_PORT}" \
+        echo "return 1;" | surreal sql -e "http://${CHECK_HOST}:${CHECK_PORT}" \
             -u "$DB_USER" -p "$DB_PASS" \
             --ns "1516" --db "AvevaMarineSample" > /dev/null 2>&1
         

@@ -35,6 +35,11 @@ use std::fmt::{Debug, Formatter};
 use std::str::FromStr;
 use std::sync::Arc;
 
+use crate::data_interface::failed_task_queue::FailedTaskQueue;
+use crate::data_interface::sesno_cache::SesnoCache;
+#[cfg(any(feature = "mqtt", feature = "web_server"))]
+use crate::data_interface::full_parse_worker::{FullParseTask, FullParseSender};
+
 #[derive(Clone)]
 pub struct AiosDBManager {
     //不同project的连接池子
@@ -55,6 +60,16 @@ pub struct AiosDBManager {
 
     ///所有元素的tree
     pub rtree: Option<AccelerationTree>,
+
+    /// 失败任务队列（用于自动重试）
+    pub failed_queue: FailedTaskQueue,
+
+    /// 会话号查询缓存（5秒TTL，减少数据库压力）
+    pub sesno_cache: Arc<SesnoCache>,
+
+    /// 全量解析任务 channel sender（用于后台异步处理新文件的全量解析）
+    #[cfg(any(feature = "mqtt", feature = "web_server"))]
+    pub full_parse_sender: Option<FullParseSender>,
 }
 
 /// Implements the `Debug` trait for `AiosDBManager`.

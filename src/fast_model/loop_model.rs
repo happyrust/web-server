@@ -109,15 +109,7 @@ pub async fn gen_loop_geos(
                     )
                     .await
                     .unwrap_or_default();
-
-                    if !neg_refnos.is_empty() {
-                        println!(
-                            "🔍 [LOOP] 找到负实体: target={}, neg_count={}",
-                            target_refno,
-                            neg_refnos.len()
-                        );
-                    }
-
+                    // dbg!(&neg_refnos);
                     shape_insts_data.insert_negs(target_refno, &neg_refnos);
                     //检查是否有CMPF
                     let cmpf_refnos =
@@ -256,7 +248,6 @@ pub async fn gen_loop_geos(
                         GeoBasicType::Pos
                     },
                     cata_neg_refnos: Default::default(),
-                    unit_flag: true, // 使用 hash_unit_mesh_params，为单位 mesh
                 };
                 geos_info.is_solid = geom_inst.geo_type == GeoBasicType::Pos;
                 let inst_key = geos_info.get_inst_key();

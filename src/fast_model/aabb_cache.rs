@@ -780,7 +780,7 @@ impl AabbCache {
 
     pub fn exists_ref_bbox(&self, refno: RefU64) -> bool {
         if let Ok(conn) = self.get_connection() {
-            if let Ok(mut stmt) = conn.prepare("SELECT 1 FROM ref_bbox WHERE refno = ?1 LIMIT 1") {
+            if let Ok(mut stmt) = conn.prepare("return 1 FROM ref_bbox WHERE refno = ?1 LIMIT 1") {
                 return stmt.exists(params![refno.0]).unwrap_or(false);
             }
         }

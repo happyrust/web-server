@@ -7,8 +7,10 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::net::{IpAddr, UdpSocket};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::{Mutex, RwLock, oneshot};
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::services::ServeDir;
 use uuid::Uuid;
@@ -17,7 +19,11 @@ pub mod handlers;
 pub mod models;
 pub mod ws; // WebSocket 模块
 // pub mod templates; // 暂时禁用，有语法错误
+pub mod auth_handlers;
 pub mod batch_tasks_template;
+pub mod config_reload_manager; // 配置热重载
+pub mod dashboard_handlers; // 增量更新实时监控仪表盘 - API
+pub mod dashboard_template; // 增量更新实时监控仪表盘 - 页面
 pub mod database_diagnostics;
 pub mod database_status_handlers;
 pub mod db_connection;
@@ -28,12 +34,14 @@ pub mod db_status_template;
 pub mod incremental_update_handlers;
 pub mod layout;
 pub mod litefs_handlers;
+pub mod mqtt_monitor_handlers;
 pub mod remote_runtime;
 pub mod remote_sync_handlers;
 pub mod remote_sync_template;
 pub mod room_api;
 pub mod room_page;
 pub mod simple_templates;
+pub mod site_config_handlers; // 站点配置管理
 pub mod site_metadata;
 pub mod sse_handlers; // SSE 事件流处理器
 pub mod sync_control_center;
@@ -55,10 +63,14 @@ use models::*;
 pub struct AppState {
     /// 任务管理器
     pub task_manager: Arc<Mutex<TaskManager>>,
-    /// 配置管理器
+    /// 配置管理器（前端模板用途，非 DbOption）
     pub config_manager: Arc<RwLock<ConfigManager>>,
+    /// 配置热重载管理器（DbOption 热更新）
+    pub config_reload: Arc<crate::web_server::config_reload_manager::ConfigReloadManager>,
     /// 进度广播中心（用于 WebSocket 和 gRPC）
     pub progress_hub: Arc<crate::shared::ProgressHub>,
+    /// 服务器关闭信号发送器（用于优雅关闭和重启）
+    pub shutdown_tx: Arc<Mutex<Option<oneshot::Sender<()>>>>,
 }
 
 /// 任务管理器
@@ -129,10 +141,15 @@ impl AppState {
             task_manager.active_tasks.insert(task.id.clone(), task);
         }
 
+        let config_reload = config_reload_manager::ConfigReloadManager::new()
+            .expect("Failed to initialize ConfigReloadManager");
+
         Self {
             task_manager: Arc::new(Mutex::new(task_manager)),
             config_manager: Arc::new(RwLock::new(config_manager)),
+            config_reload: Arc::new(config_reload),
             progress_hub: Arc::new(crate::shared::ProgressHub::default()),
+            shutdown_tx: Arc::new(Mutex::new(None)),
         }
     }
 }
@@ -143,16 +160,187 @@ impl ConfigManager {
     }
 }
 
+/// 解析模板文件路径
+/// 优先检查可执行文件同目录下的 templates，然后向上查找项目根目录
+pub fn resolve_template_path(relative_path: &str) -> PathBuf {
+    // 提取文件名（如 "incremental_update_vue.html"）
+    let path_buf = PathBuf::from(relative_path);
+    let file_name = path_buf.file_name().and_then(|n| n.to_str()).unwrap_or("");
+
+    // 1. 优先检查可执行文件同目录下的 templates（便携式部署，最高优先级）
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            let exe_template_path = exe_dir.join("templates").join(file_name);
+            if exe_template_path.exists() {
+                return exe_template_path;
+            }
+        }
+    }
+
+    // 2. 尝试当前工作目录（开发环境或从项目根目录启动）
+    let current_dir_path = PathBuf::from(relative_path);
+    if current_dir_path.exists() {
+        return current_dir_path;
+    }
+
+    // 3. 尝试相对于可执行文件的路径（站点部署环境，向上查找项目根目录）
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            // 从 site-main/bin/web_server.exe 向上找到项目根目录
+            let mut path = exe_dir.to_path_buf();
+            // 向上查找，直到找到包含 templates 的目录
+            for _ in 0..5 {
+                let template_path = path.join(relative_path);
+                if template_path.exists() {
+                    return template_path;
+                }
+                if let Some(parent) = path.parent() {
+                    path = parent.to_path_buf();
+                } else {
+                    break;
+                }
+            }
+        }
+    }
+
+    // 如果都找不到，返回相对路径（会在运行时失败，但至少不会编译错误）
+    PathBuf::from(relative_path)
+}
+
+/// 通过UdpSocket获取本机IP地址
+fn get_local_ip_via_udp() -> Result<String, std::io::Error> {
+    // 连接到一个外部地址（不需要实际连接成功）
+    // 这个方法会返回用于发送数据包的网络接口的IP地址
+    let socket = UdpSocket::bind("0.0.0.0:0")?;
+    socket.connect("8.8.8.8:80")?;
+    let local_addr = socket.local_addr()?;
+
+    if let IpAddr::V4(ipv4) = local_addr.ip() {
+        Ok(ipv4.to_string())
+    } else {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            "无法获取IPv4地址",
+        ))
+    }
+}
+
+/// 解析静态文件目录路径
+/// 尝试多个可能的路径，确保无论工作目录在哪里都能找到静态文件
+/// 优先检查可执行文件同目录下的 static（便携式部署）
+fn resolve_static_dir() -> PathBuf {
+    // 1. 优先检查可执行文件同目录下的 static（便携式部署，最高优先级）
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            let exe_static_path = exe_dir.join("static");
+            if exe_static_path.exists() && exe_static_path.is_dir() {
+                println!(
+                    "📂 使用静态文件目录（可执行文件同目录）: {}",
+                    exe_static_path.display()
+                );
+                return exe_static_path;
+            }
+        }
+    }
+
+    // 2. 尝试当前工作目录（开发环境或从项目根目录启动）
+    let current_dir_path = PathBuf::from("src/web_server/static");
+    if current_dir_path.exists() && current_dir_path.is_dir() {
+        println!(
+            "📂 使用静态文件目录（当前目录）: {}",
+            current_dir_path.display()
+        );
+        return current_dir_path;
+    }
+
+    // 3. 尝试站点目录下的 static（备用）
+    let site_static_path = PathBuf::from("static");
+    if site_static_path.exists() && site_static_path.is_dir() {
+        println!(
+            "📂 使用静态文件目录（站点目录）: {}",
+            site_static_path.display()
+        );
+        return site_static_path;
+    }
+
+    // 如果都找不到，返回默认路径（会在运行时失败，但至少不会编译错误）
+    println!("⚠️  警告: 未找到静态文件目录，使用默认路径: src/web_server/static");
+    PathBuf::from("src/web_server/static")
+}
+
+/// 解析归档文件目录路径
+/// 尝试多个可能的路径，确保无论工作目录在哪里都能找到 assets/archives 目录
+pub fn resolve_archives_dir() -> PathBuf {
+    // 1. 优先检查可执行文件同目录下的 assets/archives（便携式部署，最高优先级）
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            let exe_archives_path = exe_dir.join("assets/archives");
+            if exe_archives_path.exists() && exe_archives_path.is_dir() {
+                println!(
+                    "📂 使用归档文件目录（可执行文件同目录）: {}",
+                    exe_archives_path.display()
+                );
+                return exe_archives_path;
+            }
+        }
+    }
+
+    // 2. 尝试当前工作目录（开发环境或从项目根目录启动）
+    let current_dir_path = PathBuf::from("assets/archives");
+    if current_dir_path.exists() && current_dir_path.is_dir() {
+        println!(
+            "📂 使用归档文件目录（当前目录）: {}",
+            current_dir_path.display()
+        );
+        return current_dir_path;
+    }
+
+    // 3. 尝试从可执行文件向上查找项目根目录
+    if let Ok(exe_path) = std::env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            let mut path = exe_dir.to_path_buf();
+            // 向上查找，直到找到包含 assets/archives 的目录
+            for _ in 0..5 {
+                let archives_path = path.join("assets/archives");
+                if archives_path.exists() && archives_path.is_dir() {
+                    println!(
+                        "📂 使用归档文件目录（向上查找）: {}",
+                        archives_path.display()
+                    );
+                    return archives_path;
+                }
+                if let Some(parent) = path.parent() {
+                    path = parent.to_path_buf();
+                } else {
+                    break;
+                }
+            }
+        }
+    }
+
+    // 如果都找不到，返回默认路径（会在运行时失败，但至少不会编译错误）
+    println!("⚠️  警告: 未找到归档文件目录，使用默认路径: assets/archives");
+    PathBuf::from("assets/archives")
+}
+
 /// 启动Web UI服务器
 pub async fn start_web_server(port: u16) -> anyhow::Result<()> {
-    start_web_server_with_config(port, None).await
+    start_web_server_with_config(port, None, None).await
 }
 
 pub async fn start_web_server_with_config(
     port: u16,
     config_file: Option<&str>,
+    host: Option<String>,
 ) -> anyhow::Result<()> {
     let app_state = AppState::new();
+
+    // 创建 shutdown channel
+    let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
+    {
+        let mut tx_guard = app_state.shutdown_tx.lock().await;
+        *tx_guard = Some(shutdown_tx);
+    }
 
     // 如果指定了配置文件，设置环境变量
     if let Some(config_path) = config_file {
@@ -161,6 +349,11 @@ pub async fn start_web_server_with_config(
         }
         println!("⚙️  使用配置文件: {}.toml", config_path);
     }
+
+    // 📂 优先加载静态文件目录（启动时立即检查）
+    println!("🔍 正在查找静态文件目录...");
+    let static_dir = resolve_static_dir();
+    println!("✅ 静态文件目录已确定: {}", static_dir.display());
 
     // 🔧 修复：初始化数据库连接
     println!("🔄 正在初始化数据库连接...");
@@ -202,9 +395,53 @@ pub async fn start_web_server_with_config(
 
     // 初始化名词层级查询API
     let noun_hierarchy_state = NounHierarchyApiState {
-        db_manager: Arc::new(db_manager),
+        db_manager: Arc::new(db_manager.clone()),
     };
     let noun_hierarchy_routes = create_noun_hierarchy_routes(noun_hierarchy_state);
+
+    // 🔥 启动增量监测后台任务（如果启用）
+    let db_option = aios_core::get_db_option();
+    if db_option.sync_live.unwrap_or(false) {
+        // 检查是否启用 web_server 自动监测（需要在 rs-core 中添加该字段支持）
+        // 暂时使用 sync_live 字段作为开关
+        println!("🔍 启动增量监测后台任务...");
+
+        // 🎯 设置 ProgressHub 到 SYNC_CONTROL_CENTER，用于实时 WebSocket 推送
+        {
+            let mut center = sync_control_center::SYNC_CONTROL_CENTER.write().await;
+            center.progress_hub = Some(app_state.progress_hub.clone());
+            println!("✅ ProgressHub 已注入到 SyncControlCenter");
+        }
+
+        let mgr_for_watch = db_manager.clone();
+        
+        // 🔧 注意：MQTT Publisher 不在此自动启动
+        // MQTT 功能（Publisher + Subscriber）完全由前端控制：
+        // - 用户点击 "启动订阅" 按钮 → POST /api/mqtt/subscription/start
+        // - 后端调用 start_runtime() → 启动 Publisher + Subscriber
+        // 这样可以避免 MQTT Broker 未运行时的连接错误刷屏
+        #[cfg(feature = "mqtt")]
+        println!("ℹ️  MQTT 功能由前端控制，请通过 MQTT 监控页面启动订阅");
+        
+        tokio::spawn(async move {
+            // 🔥 重要：先初始化监听器，扫描并缓存所有数据库文件的header信息
+            // 注意：数据库连接已在第310行初始化完成，这里可以安全地使用 SUL_DB
+            println!("📋 正在初始化数据库文件监听器...");
+            if let Err(e) = mgr_for_watch.init_watcher().await {
+                eprintln!("❌ 初始化监听器失败: {:?}", e);
+                return;
+            }
+            println!("✅ 监听器初始化完成");
+
+            println!("📡 增量监测任务已启动，正在监听文件变化...");
+            if let Err(e) = mgr_for_watch.async_watch().await {
+                eprintln!("❌ 增量监测任务异常退出: {:?}", e);
+            }
+        });
+        println!("✅ 增量监测后台任务已启动");
+    } else {
+        println!("ℹ️  增量监测未启用 (sync_live = false)");
+    }
 
     // 初始化房间 API
     let room_api_state = room_api::RoomApiState {
@@ -217,6 +454,7 @@ pub async fn start_web_server_with_config(
 
     let app = Router::new()
         // API路由
+        .route("/api/auth/token", post(auth_handlers::generate_token))
         .route("/api/tasks", get(get_tasks).post(create_task))
         .route("/api/tasks/{id}", get(get_task).delete(delete_task))
         .route("/api/tasks/{id}/start", post(start_task))
@@ -285,6 +523,39 @@ pub async fn start_web_server_with_config(
             "/api/database/startup/logs",
             get(db_startup_handlers::get_startup_logs),
         )
+        // Dashboard API - 增量更新实时监控
+        .route(
+            "/api/dashboard/summary",
+            get(dashboard_handlers::get_dashboard_summary),
+        )
+        .route(
+            "/api/dashboard/active-tasks",
+            get(dashboard_handlers::get_active_tasks),
+        )
+        .route(
+            "/api/dashboard/failed-tasks",
+            get(dashboard_handlers::get_failed_tasks),
+        )
+        .route(
+            "/api/dashboard/task-details/{id}",
+            get(dashboard_handlers::get_task_details),
+        )
+        .route(
+            "/api/dashboard/stats/timeline",
+            get(dashboard_handlers::get_timeline_stats),
+        )
+        .route(
+            "/api/dashboard/retry-task/{id}",
+            post(dashboard_handlers::retry_failed_task),
+        )
+        .route(
+            "/api/dashboard/cleanup-exhausted",
+            post(dashboard_handlers::cleanup_exhausted_tasks),
+        )
+        .route(
+            "/api/dashboard/increment-elements/{sync_id}",
+            get(dashboard_handlers::get_increment_elements),
+        )
         // 增量更新检测API
         .route(
             "/api/incremental/status",
@@ -318,8 +589,46 @@ pub async fn start_web_server_with_config(
             "/api/incremental/config",
             post(incremental_update_handlers::update_incremental_config),
         )
+        .route(
+            "/api/incremental/logs",
+            get(incremental_update_handlers::get_increment_logs),
+        )
+        .route(
+            "/api/incremental/history",
+            get(incremental_update_handlers::get_sync_history_paged),
+        )
+        .route(
+            "/api/incremental/archives",
+            get(incremental_update_handlers::list_cba_files),
+        )
+        .route(
+            "/api/incremental/stats",
+            get(incremental_update_handlers::get_incremental_stats),
+        )
+        // MQTT 节点监控 API
+        .route(
+            "/api/mqtt/nodes",
+            get(mqtt_monitor_handlers::get_mqtt_nodes_status),
+        )
+        .route(
+            "/api/mqtt/nodes/{location}",
+            delete(mqtt_monitor_handlers::remove_mqtt_node),
+        )
+        .route(
+            "/api/mqtt/nodes/client-unsubscribed",
+            post(mqtt_monitor_handlers::client_unsubscribed),
+        )
+        .route(
+            "/api/mqtt/messages",
+            get(mqtt_monitor_handlers::get_message_delivery_status),
+        )
+        .route(
+            "/api/mqtt/messages/{message_id}",
+            get(mqtt_monitor_handlers::get_message_delivery_detail),
+        )
         // 增量更新页面
         .route("/incremental", get(serve_incremental_update_page))
+        .route("/incremental-vue", get(serve_incremental_update_vue_page))
         // 同步控制中心
         .route(
             "/sync-control",
@@ -412,6 +721,69 @@ pub async fn start_web_server_with_config(
             "/api/sync/mqtt/status",
             get(sync_control_handlers::get_mqtt_server_status),
         )
+        .route(
+            "/api/mqtt/broker/logs",
+            get(sync_control_handlers::get_mqtt_broker_logs_api),
+        )
+        // MQTT 订阅客户端控制
+        .route(
+            "/api/mqtt/subscription/start",
+            post(sync_control_handlers::start_mqtt_subscription_api),
+        )
+        .route(
+            "/api/mqtt/subscription/stop",
+            post(sync_control_handlers::stop_mqtt_subscription_api),
+        )
+        .route(
+            "/api/mqtt/subscription/clear-master-config",
+            post(sync_control_handlers::clear_master_config_api),
+        )
+        .route(
+            "/api/mqtt/subscription/status",
+            get(sync_control_handlers::get_mqtt_subscription_status),
+        )
+        .route(
+            "/api/mqtt/subscription/status/stream",
+            get(sse_handlers::mqtt_subscription_status_stream_handler),
+        )
+        // 节点角色管理
+        .route(
+            "/api/mqtt/node/set-master",
+            post(sync_control_handlers::set_as_master_node),
+        )
+        .route(
+            "/api/mqtt/node/set-client",
+            post(sync_control_handlers::set_as_client_node),
+        )
+        // 站点配置管理
+        .route(
+            "/api/site-config",
+            get(site_config_handlers::get_site_config),
+        )
+        .route(
+            "/api/site/info",
+            get(site_config_handlers::get_site_info),
+        )
+        .route(
+            "/api/site-config/save",
+            post(site_config_handlers::save_site_config),
+        )
+        .route(
+            "/api/site-config/validate",
+            post(site_config_handlers::validate_site_config),
+        )
+        .route(
+            "/api/site-config/reload",
+            post(site_config_handlers::reload_site_config),
+        )
+        .route(
+            "/api/site-config/restart",
+            post(site_config_handlers::restart_server),
+        )
+        .route(
+            "/api/site-config/server-ip",
+            get(site_config_handlers::get_server_ip),
+        )
         // 异地增量环境配置页面 + API
         .route("/remote-sync", get(remote_sync_handlers::remote_sync_page))
         .route(
@@ -452,6 +824,20 @@ pub async fn start_web_server_with_config(
             post(remote_sync_handlers::import_env_from_dboption),
         )
         .route(
+            "/api/remote-sync/batch-import",
+            post(remote_sync_handlers::batch_import),
+        )
+        // 站点配置导出（供其他站点通过 URL 导入）
+        .route(
+            "/api/site-config/export",
+            get(remote_sync_handlers::export_site_config),
+        )
+        // 从远程 URL 导入站点配置
+        .route(
+            "/api/remote-sync/import-from-url",
+            post(remote_sync_handlers::import_site_from_url),
+        )
+        .route(
             "/api/remote-sync/logs",
             get(remote_sync_handlers::list_logs),
         )
@@ -476,6 +862,14 @@ pub async fn start_web_server_with_config(
             get(remote_sync_handlers::get_site_metadata),
         )
         .route(
+            "/api/remote-sync/sync-site",
+            post(remote_sync_handlers::sync_site_api),
+        )
+        .route(
+            "/api/remote-sync/update-master-config",
+            post(remote_sync_handlers::update_master_config_api),
+        )
+        .route(
             "/api/remote-sync/sites/{id}/files/{*path}",
             get(remote_sync_handlers::serve_site_files),
         )
@@ -490,10 +884,8 @@ pub async fn start_web_server_with_config(
             "/api/remote-sync/sites/{id}/files",
             get(remote_sync_handlers::serve_site_files_root),
         )
-        // LiteFS 节点状态和健康检查 API
-        .route("/api/node-status", get(litefs_handlers::get_node_status))
+        // 健康检查 API
         .route("/api/health", get(litefs_handlers::health_check))
-        .route("/api/sync-status", get(litefs_handlers::sync_status))
         // 数据库状态管理API
         .route(
             "/api/database/status",
@@ -701,13 +1093,18 @@ pub async fn start_web_server_with_config(
         )
         .route("/api/export/tasks", get(handlers::list_export_tasks))
         .route("/api/export/cleanup", post(handlers::cleanup_export_tasks))
-        // 静态文件服务
-        .nest_service("/static", ServeDir::new("src/web_server/static"))
+        // 静态文件服务 - 使用智能路径解析
+        .nest_service("/static", ServeDir::new(resolve_static_dir()))
         .nest_service("/files/output", ServeDir::new("output"))
-        // CBA 文件分发服务 - 用于远程站点下载增量数据包
-        .nest_service("/assets/archives", ServeDir::new("assets/archives"))
+        // CBA 文件分发服务 - 用于远程站点下载增量数据包（使用智能路径解析）
+        // 使用 nest 嵌套路由：根路径显示目录列表，子路径返回文件内容
+        .nest("/assets/archives", axum::Router::new()
+            .route("/", get(incremental_update_handlers::serve_archives_root))
+            .route("/{*path}", get(incremental_update_handlers::serve_archives_file))
+        )
         // 主页面
         .route("/", get(index_page))
+        .route("/admin", get(handlers::admin_page))
         .route("/dashboard", get(dashboard_page))
         .route("/config", get(config_page))
         .route("/tasks", get(tasks_page))
@@ -756,9 +1153,22 @@ pub async fn start_web_server_with_config(
         .merge(noun_hierarchy_routes)
         .merge(room_routes);
 
-    let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{}", port)).await?;
+    // 监听指定地址，默认 0.0.0.0（所有网络接口）
+    let bind_host = host.as_deref().unwrap_or("0.0.0.0");
+    let bind_addr = format!("{}:{}", bind_host, port);
+    let listener = tokio::net::TcpListener::bind(&bind_addr).await?;
+
+    // 根据绑定地址选择显示的IP
+    let display_ip = if bind_host == "0.0.0.0" {
+        // 绑定所有接口时，显示本机实际IP
+        get_local_ip_via_udp().unwrap_or_else(|_| "127.0.0.1".to_string())
+    } else {
+        // 指定了具体host时，显示该host
+        bind_host.to_string()
+    };
+
     println!("🚀 Web UI服务器启动成功！");
-    println!("📱 访问地址: http://localhost:{}", port);
+    println!("📱 访问地址: http://{}:{}", display_ip, port);
     println!("🎯 功能包括:");
     println!("   - 数据库生成任务管理");
     println!("   - 实时进度监控");
@@ -774,7 +1184,14 @@ pub async fn start_web_server_with_config(
     // 也注释掉，避免启动时查询数据库
     // tokio::spawn(crate::web_server::handlers::projects_health_scheduler());
 
-    axum::serve(listener, app).await?;
+    // 使用 graceful shutdown
+    let shutdown = async {
+        shutdown_rx.await.ok();
+    };
+
+    axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown)
+        .await?;
     Ok(())
 }
 

@@ -40,6 +40,72 @@
 
 ## 编译
 
+### Windows 编译环境配置
+
+#### 必需依赖
+在 Windows 环境下编译项目需要安装以下工具：
+
+1. **CMake**
+   ```bash
+   winget install --id Kitware.CMake --source winget
+   ```
+
+2. **NASM (Netwide Assembler)**
+   ```bash
+   winget install --id "NASM.NASM" --source winget
+   ```
+
+3. **LLVM (包含 libclang)**
+   ```bash
+   winget install --id LLVM.LLVM --source winget
+   ```
+
+#### 环境变量设置
+编译前需要设置以下环境变量：
+
+**临时设置 (当前会话有效):**
+```cmd
+set AWS_LC_SYS_NO_ASM=1
+set LIBCLANG_PATH=D:\LLVM\bin
+set PATH=C:\Program Files\CMake\bin;C:\Program Files\NASM;D:\LLVM\bin;%PATH%
+```
+
+**或使用 PowerShell:**
+```powershell
+$env:AWS_LC_SYS_NO_ASM = "1"
+$env:LIBCLANG_PATH = "D:\LLVM\bin"
+$env:PATH = "C:\Program Files\CMake\bin;C:\Program Files\NASM;D:\LLVM\bin;" + $env:PATH
+```
+
+#### 编译命令
+```bash
+cargo check      # 检查代码编译
+cargo build      # 调试版本编译
+cargo build --release  # 发布版本编译
+```
+
+#### 常见问题解决
+
+1. **aws-lc-sys 编译错误**
+   - 设置 `AWS_LC_SYS_NO_ASM=1` 环境变量来禁用 ASM 要求
+   - 确保 cmake 和 nasm 已安装并在 PATH 中
+
+2. **bindgen 找不到 libclang**
+   - 设置 `LIBCLANG_PATH=D:\LLVM\bin`
+   - 确保 LLVM 安装完整
+
+3. **PATH 环境变量未更新**
+   - 重启命令行窗口或手动设置 PATH
+   - 或者使用完整路径运行工具
+
+#### 工具安装验证
+```cmd
+# 验证工具是否正确安装
+cmake --version
+nasm --version
+clang --version
+```
+
 ### Centos 7的cross build：
 
 cargo zigbuild --release --target x86_64-unknown-linux-gnu.2.17

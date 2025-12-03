@@ -26,10 +26,58 @@ pub struct SyncE3dFileMsg {
     // 加入时间戳, 或者这里开启索引
     // 这个字段用于存储文件的时间戳信息
     pub timestamp: SurrealDatetime,
+
+    // 会话范围 (例如: "1154..=1177")
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_range: Option<String>,
+
+    // 统计信息: 新增元素总数
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_added: Option<u32>,
+
+    // 统计信息: 修改元素总数
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_modified: Option<u32>,
+
+    // 统计信息: 删除元素总数
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_deleted: Option<u32>,
+
+    // 是否为完全同步（新文件）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub is_full_sync: Option<bool>,
+
+    // 数据库编号
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub db_num: Option<u32>,
 }
 
 // 对 SyncE3dFileMsg 类型进行 trait 实现
 impl SyncE3dFileMsg {
+    /// 获取有效的 file_server_host，如果未配置则使用默认值
+    fn get_effective_file_server_host() -> String {
+        let db_option = get_db_option();
+        let host = &db_option.file_server_host;
+        
+        if host.is_empty() {
+            // 未配置时，使用当前 web server 地址作为默认值
+            let server_ip = Self::get_local_ip_via_udp()
+                .unwrap_or_else(|_| "127.0.0.1".to_string());
+            // 默认端口 8080
+            format!("http://{}:8080/assets/archives", server_ip)
+        } else {
+            host.clone()
+        }
+    }
+
+    /// 通过 UDP 获取本地 IP 地址
+    fn get_local_ip_via_udp() -> std::io::Result<String> {
+        let socket = std::net::UdpSocket::bind("0.0.0.0:0")?;
+        socket.connect("8.8.8.8:80")?;
+        let local_addr = socket.local_addr()?;
+        Ok(local_addr.ip().to_string())
+    }
+
     // 定义一种公共构造函数
     // 这个函数接受两个类型为 String 的向量，并返回 Self 类型，代表 SyncE3dFileMsg
     pub fn new(file_names: Vec<String>, file_hashes: Vec<String>) -> Self {
@@ -38,12 +86,19 @@ impl SyncE3dFileMsg {
             file_names,
             // 存储参数 file_hashes 到实例的 file_hashes 字段
             file_hashes,
-            // 拷贝数据库选项中的 file_server_host 并存储到实例的 file_server_host 字段里
-            file_server_host: get_db_option().file_server_host.clone(),
+            // 使用有效的 file_server_host（支持默认值）
+            file_server_host: Self::get_effective_file_server_host(),
             // 拷贝数据库选项中的 location 并存储到实例的 location 字段里
             location: get_db_option().location.clone(),
             // 使用Default trait 的 default 方法将 timestamp 字段初始化为默认值
             timestamp: Default::default(),
+            // 新增字段初始化为 None（可选字段）
+            session_range: None,
+            total_added: None,
+            total_modified: None,
+            total_deleted: None,
+            is_full_sync: None,
+            db_num: None,
         }
     }
 }
@@ -96,5 +151,26 @@ pub fn new_mqtt_inst(id: &str) -> MqttInstance {
     let (client, el) = AsyncClient::new(mqttoptions, 5000);
 
     // 返回新创建的MqttInstance
+    MqttInstance { client, el }
+}
+
+/// 创建一个新的Mqtt实例函数（支持动态配置）
+/// 如果提供了 mqtt_host 和 mqtt_port，则使用提供的配置，否则使用默认配置
+pub fn new_mqtt_inst_with_config(
+    id: &str,
+    mqtt_host: Option<String>,
+    mqtt_port: Option<u16>,
+) -> MqttInstance {
+    let db_option = get_db_option();
+
+    // 优先使用传入的配置，否则使用默认配置
+    let host = mqtt_host.unwrap_or_else(|| db_option.mqtt_host.clone());
+    let port = mqtt_port.unwrap_or(db_option.mqtt_port);
+
+    let mut mqttoptions = MqttOptions::new(id, host.as_str(), port);
+    mqttoptions.set_clean_session(false);
+    mqttoptions.set_keep_alive(Duration::from_secs(500));
+
+    let (client, el) = AsyncClient::new(mqttoptions, 5000);
     MqttInstance { client, el }
 }

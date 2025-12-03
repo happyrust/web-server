@@ -104,7 +104,6 @@ pub async fn save_instance_data_optimize(
             let relate_id = gen_bytes_hash(&relate_json);
             geo_relate_buffer.push(format!("{{ {relate_json}, id: '{relate_id}' }}"));
 
-            // 直接使用 EleInstGeo，它已经包含了正确的 unit_flag
             inst_geo_buffer.push(inst.gen_unit_geo_sur_json());
 
             if inst_geo_buffer.len() >= CHUNK_SIZE {
@@ -171,17 +170,7 @@ pub async fn save_instance_data_optimize(
     }
 
     // neg_relate
-    // 关系方向：负实体 -[neg_relate]-> 正实体
-    // - in: 负实体 refno
-    // - out: 正实体 refno (被减实体)
-    // 查询时使用反向查找：inst_relate:{正实体}<-neg_relate 来找到所有指向该正实体的负实体
-    // println!("🔍 [DEBUG] neg_relate_map 大小: {}", inst_mgr.neg_relate_map.len());
     if !inst_mgr.neg_relate_map.is_empty() {
-        println!("🔍 [DEBUG] 开始创建 neg_relate 关系:");
-        for (target, refnos) in &inst_mgr.neg_relate_map {
-            println!("  目标: {}, 负实体数量: {}", target, refnos.len());
-        }
-
         let mut neg_batcher = TransactionBatcher::new(MAX_TX_STATEMENTS, MAX_CONCURRENT_TX);
         let mut neg_buffer: Vec<String> = Vec::with_capacity(CHUNK_SIZE);
 
@@ -189,9 +178,9 @@ pub async fn save_instance_data_optimize(
             for (index, refno) in refnos.iter().enumerate() {
                 neg_buffer.push(format!(
                     "{{ in: {}, id: [{}, {index}], out: {} }}",
-                    refno.to_pe_key(), // 负实体
+                    refno.to_pe_key(),
                     refno.to_string(),
-                    target.to_pe_key(), // 正实体（被减实体）
+                    target.to_pe_key(),
                 ));
 
                 if neg_buffer.len() >= CHUNK_SIZE {
@@ -217,18 +206,7 @@ pub async fn save_instance_data_optimize(
     }
 
     // ngmr_relate
-    // 关系方向：负实体相关元素 -[ngmr_relate]-> 正实体
-    // - in: ele_refno (负实体相关元素)
-    // - out: 目标k (正实体)
-    // - ngmr: ngmr_geom_refno (NGMR 几何引用)
-    // 查询时使用反向查找：inst_relate:{正实体}<-ngmr_relate 来找到所有指向该正实体的负实体相关元素
-    // println!("🔍 [DEBUG] ngmr_neg_relate_map 大小: {}", inst_mgr.ngmr_neg_relate_map.len());
     if !inst_mgr.ngmr_neg_relate_map.is_empty() {
-        println!("🔍 [DEBUG] 开始创建 ngmr_relate 关系:");
-        for (k, refnos) in &inst_mgr.ngmr_neg_relate_map {
-            println!("  目标: {}, NGMR 数量: {}", k, refnos.len());
-        }
-
         let mut ngmr_batcher = TransactionBatcher::new(MAX_TX_STATEMENTS, MAX_CONCURRENT_TX);
         let mut ngmr_buffer: Vec<String> = Vec::with_capacity(CHUNK_SIZE);
 
@@ -239,9 +217,7 @@ pub async fn save_instance_data_optimize(
                 let ngmr_pe = ngmr_geom_refno.to_pe_key();
                 ngmr_buffer.push(format!(
                     "{{ in: {0}, id: [{0}, {1}, {2}], out: {1}, ngmr: {2}}}",
-                    ele_pe,  // 负实体相关元素
-                    kpe,     // 正实体（目标）
-                    ngmr_pe  // NGMR 几何引用
+                    ele_pe, kpe, ngmr_pe
                 ));
 
                 if ngmr_buffer.len() >= CHUNK_SIZE {
@@ -304,7 +280,7 @@ pub async fn save_instance_data_optimize(
         }
 
         let relate_sql = format!(
-            "{{id: {0}, in: {1}, out: inst_info:⟨{2}⟩, world_trans: trans:⟨{3}⟩, generic: '{4}', zone_refno: fn::find_ancestor_type({1}, 'ZONE'), dt: fn::ses_date({1}), has_cata_neg: {5}, solid: {6}, owner_refno: {7}, owner_type: '{8}'}}",
+            "{{id: {0}, in: {1}, out: inst_info:⟨{2}⟩, world_trans: trans:⟨{3}⟩, generic: '{4}', zone_refno: fn::find_ancestor_type({1}, 'ZONE'), dt: fn::ses_date({1}), has_cata_neg: {5}, solid: {6}, owner_refno: '{7}', owner_type: '{8}'}}",
             key.to_inst_relate_key(),
             key.to_pe_key(),
             info.id_str(),
@@ -328,77 +304,27 @@ pub async fn save_instance_data_optimize(
     }
 
     if !inst_relate_buffer.is_empty() {
+        debug_model_debug!(
+            "🔍 [DEBUG] save_instance_data_optimize flushing remaining inst_relate records: {}",
+            inst_relate_buffer.len()
+        );
+
+        // 打印第一条 inst_relate 记录用于调试
+        if let Some(first) = inst_relate_buffer.first() {
+            debug_model_debug!("🔍 [DEBUG] First inst_relate record: {}", first);
+        }
+
         let statement = format!(
             "INSERT RELATION INTO inst_relate [{}];",
             inst_relate_buffer.join(",")
         );
-        inst_relate_batcher.push(statement).await?;
+        debug_model_debug!("🔍 [DEBUG] Executing inst_relate INSERT SQL: {}", statement);
         debug_model_debug!(
-            "save_instance_data_optimize flushing inst_relate from inst_info_map: {}",
+            "🔍 [DEBUG] Executing inst_relate INSERT with {} records",
             inst_relate_buffer.len()
         );
-    }
-
-    // 为 inst_tubi_map 也创建 inst_relate 记录（BRAN/HANG Tubing 几何体）
-    if !inst_mgr.inst_tubi_map.is_empty() {
-        debug_model_debug!(
-            "save_instance_data_optimize processing inst_tubi_map: {} Tubing records",
-            inst_mgr.inst_tubi_map.len()
-        );
-
-        let mut tubi_relate_buffer: Vec<String> = Vec::with_capacity(CHUNK_SIZE);
-
-        for (key, info) in &inst_mgr.inst_tubi_map {
-            inst_keys.push(*key);
-
-            if info.world_transform.translation.is_nan()
-                || info.world_transform.rotation.is_nan()
-                || info.world_transform.scale.is_nan()
-            {
-                continue;
-            }
-
-            let transform_hash = gen_bytes_hash(&info.world_transform);
-            if let Entry::Vacant(entry) = transform_map.entry(transform_hash) {
-                entry.insert(serde_json::to_string(&info.world_transform)?);
-            }
-
-            // 为 Tubing 创建 inst_relate 记录
-            let relate_sql = format!(
-                "{{id: {0}, in: {1}, out: inst_info:⟨{2}⟩, world_trans: trans:⟨{3}⟩, generic: '{4}', zone_refno: fn::find_ancestor_type({1}, 'ZONE'), dt: fn::ses_date({1}), has_cata_neg: {5}, solid: {6}, owner_refno: {7}, owner_type: '{8}'}}",
-                key.to_inst_relate_key(),
-                key.to_pe_key(),
-                info.id_str(),
-                transform_hash,
-                info.generic_type.to_string(),
-                info.has_cata_neg,
-                info.is_solid,
-                info.owner_refno.to_pe_key(),
-                info.owner_type,
-            );
-
-            tubi_relate_buffer.push(relate_sql);
-            if tubi_relate_buffer.len() >= CHUNK_SIZE {
-                let statement = format!(
-                    "INSERT RELATION INTO inst_relate [{}];",
-                    tubi_relate_buffer.join(",")
-                );
-                inst_relate_batcher.push(statement).await?;
-                tubi_relate_buffer.clear();
-            }
-        }
-
-        if !tubi_relate_buffer.is_empty() {
-            let statement = format!(
-                "INSERT RELATION INTO inst_relate [{}];",
-                tubi_relate_buffer.join(",")
-            );
-            inst_relate_batcher.push(statement).await?;
-            debug_model_debug!(
-                "save_instance_data_optimize flushing inst_relate from inst_tubi_map: {}",
-                tubi_relate_buffer.len()
-            );
-        }
+        inst_relate_batcher.push(statement).await?;
+        debug_model_debug!("✅ [DEBUG] inst_relate INSERT pushed successfully");
     }
 
     if !inst_info_buffer.is_empty() {

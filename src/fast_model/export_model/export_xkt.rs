@@ -506,7 +506,7 @@ impl XktExporter {
 
         // 启动几何体生成
         let db_option_ext = crate::options::DbOptionExt::from(db_option.clone());
-        gen_geos_data(dbno, refnos.to_vec(), &db_option_ext, None, sender, None, false)
+        gen_geos_data(dbno, refnos.to_vec(), &db_option_ext, None, sender, None)
             .await
             .context("生成几何体数据失败")?;
 
@@ -606,8 +606,7 @@ impl ModelExporter for XktExporter {
         let geom_insts = query_geometry_instances(&all_refnos, true, config.common.verbose).await?;
 
         let export_data =
-            collect_export_data(geom_insts, &all_refnos, mesh_dir, config.common.verbose, None)
-                .await?;
+            collect_export_data(geom_insts, &all_refnos, mesh_dir, config.common.verbose).await?;
 
         if export_data.total_instances == 0 {
             println!("⚠️  未找到任何几何体数据");

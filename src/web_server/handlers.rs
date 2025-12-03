@@ -1959,14 +1959,38 @@ pub async fn api_sqlite_spatial_query(
 
 /// 提供增量更新检测页面
 pub async fn serve_incremental_update_page() -> Html<String> {
-    let html = std::fs::read_to_string("src/web_server/templates/incremental_update.html")
-        .unwrap_or_else(|_| "<h1>增量更新检测页面未找到</h1>".to_string());
+    let template_path = crate::web_server::resolve_template_path(
+        "src/web_server/templates/incremental_update.html",
+    );
+    let html = std::fs::read_to_string(&template_path).unwrap_or_else(|_| {
+        eprintln!("⚠️  警告: 无法读取模板文件: {}", template_path.display());
+        format!(
+            "<h1>增量更新检测页面未找到</h1><p>模板路径: {}</p>",
+            template_path.display()
+        )
+    });
     let wrapped = crate::web_server::layout::wrap_external_html_in_layout(
         "增量更新检测 - AIOS",
         Some("tasks"),
         &html,
     );
     Html(wrapped)
+}
+
+/// 提供增量更新检测页面 (Vue 版本)
+pub async fn serve_incremental_update_vue_page() -> Html<String> {
+    let template_path = crate::web_server::resolve_template_path(
+        "src/web_server/templates/incremental_update_vue.html",
+    );
+    let html = std::fs::read_to_string(&template_path).unwrap_or_else(|_| {
+        eprintln!("⚠️  警告: 无法读取模板文件: {}", template_path.display());
+        format!(
+            "<h1>Vue 增量更新检测页面未找到</h1><p>模板路径: {}</p>",
+            template_path.display()
+        )
+    });
+    // Vue 版本不需要包装在 layout 中，因为是完整的 SPA
+    Html(html)
 }
 
 /// 提供数据库状态管理页面
@@ -3145,7 +3169,7 @@ pub async fn get_system_status(
     };
 
     // 测试数据库连接
-    let surrealdb_connected = match SUL_DB.query("SELECT 1").await {
+    let surrealdb_connected = match SUL_DB.query("return 1").await {
         Ok(_) => true,
         Err(_) => false,
     };
@@ -3606,7 +3630,7 @@ pub async fn test_tcp_connection(addr: &str) -> bool {
 pub async fn test_database_functionality() -> (bool, Option<String>) {
     use tokio::time::{Duration, timeout};
 
-    match timeout(Duration::from_secs(5), SUL_DB.query("SELECT 1 as test")).await {
+    match timeout(Duration::from_secs(5), SUL_DB.query("return 1 as test")).await {
         Ok(Ok(_)) => (true, None),
         Ok(Err(e)) => (false, Some(format!("数据库查询失败: {}", e))),
         Err(_) => (false, Some("数据库连接超时".to_string())),
@@ -3729,7 +3753,7 @@ pub async fn get_surreal_status(
     let listening = is_addr_listening(&bind_addr);
 
     // 是否能够进行基本查询（需要已初始化连接）
-    let connected = match SUL_DB.query("SELECT 1").await {
+    let connected = match SUL_DB.query("return 1").await {
         Ok(_) => true,
         Err(_) => false,
     };
@@ -5346,13 +5370,21 @@ pub async fn db_status_page() -> Html<String> {
 }
 
 /// 页面路由处理器
+/// 默认跳转到增量更新监控页面（Vue 版本）
 pub async fn index_page() -> Html<String> {
-    // 切换为更贴近截图的首页（简洁卡片 + 详情弹窗）
+    // 直接返回 Vue 版本的增量更新页面作为默认首页
+    serve_incremental_update_vue_page().await
+}
+
+/// 管理后台首页（原有的默认首页）
+pub async fn admin_page() -> Html<String> {
+    // 返回原有的首页内容（简洁卡片 + 详情弹窗）
     Html(crate::web_server::simple_templates::render_index_with_sidebar())
 }
 
 pub async fn dashboard_page() -> Html<String> {
-    Html(crate::web_server::simple_templates::render_dashboard_page_with_sidebar())
+    // 使用新的增量更新实时监控仪表盘
+    Html(crate::web_server::dashboard_template::render_dashboard_page())
 }
 
 pub async fn config_page() -> Html<String> {

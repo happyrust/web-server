@@ -1,5 +1,5 @@
 pub mod gen_model;
-// gen_model_old 已迁移到 gen_model/non_full_noun.rs
+pub mod gen_model_old;
 // pub mod gen_model_refactored;
 // pub mod gen_model_impl;
 
@@ -13,11 +13,6 @@ pub mod shared;
 
 pub mod error_macros;
 pub use error_macros::ModelErrorKind;
-
-pub mod refno_errors;
-pub use refno_errors::{
-    REFNO_ERROR_STORE, RefnoErrorKind, RefnoErrorStage, RefnoErrorSummary, record_refno_error,
-};
 
 pub mod capture;
 
@@ -65,15 +60,10 @@ pub mod concurrency;
 
 use aios_core::RefU64;
 use dashmap::{DashMap, DashSet};
-// 优先使用新的 gen_model 模块的 API
+pub use gen_model::gen_all_geos_data;
 pub use gen_model::*;
-
-// ✅ 已完成迁移：
-// - gen_geos_data_by_dbnum → gen_model::non_full_noun (✅ 已完成)
-// - gen_geos_data → gen_model::non_full_noun (✅ 已完成)
-// - process_meshes_by_dbnos → gen_model::mesh_processing (✅ 已完成)
-// - query_tubi_size → gen_model::utilities (✅ 已完成)
-// - ElementInfo 和 AiosDBManagerExt → 死代码，已移除
+pub use gen_model_old::query_tubi_size;
+pub use gen_model_old::*;
 use once_cell::sync::Lazy;
 use parry3d::bounding_volume::Aabb;
 // pub use gen_model_refactored::DbModelInstRefnos;

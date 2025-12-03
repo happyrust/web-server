@@ -80,7 +80,6 @@ pub async fn query_tubi_size(
     Ok(TubiSize::None)
 }
 
-/*
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -97,5 +96,3 @@ mod tests {
         }
     }
 }
-
-*/

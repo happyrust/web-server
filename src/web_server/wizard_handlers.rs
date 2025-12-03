@@ -641,7 +641,17 @@ fn parse_database_file(file_path: &Path, errors: &mut Vec<String>) -> Option<Dat
     let modified_time = metadata.modified().unwrap_or(SystemTime::UNIX_EPOCH);
 
     // 使用 parse_db_basic_info 解析数据库基本信息
-    let db_basic_info = parse_db_basic_info(file_path.to_path_buf());
+    let db_basic_info = match parse_db_basic_info(file_path.to_path_buf()) {
+        Ok(info) => info,
+        Err(e) => {
+            errors.push(format!(
+                "无法解析数据库基本信息 {}: {}",
+                file_path.display(),
+                e
+            ));
+            return None;
+        }
+    };
 
     Some(DatabaseFileInfo {
         db_num: db_basic_info.db_no as u32,

@@ -94,11 +94,32 @@ pub enum SyncEvent {
         message: String,
         timestamp: String,
     },
+    /// MQTT 订阅状态变化
+    MqttSubscriptionStatusChanged {
+        is_running: bool,
+        is_server_running: bool,
+        location: String,
+        is_master_node: bool,
+        node_role: String,
+        connection_status: serde_json::Value,
+        available_masters: Vec<serde_json::Value>,
+        timestamp: String,
+    },
+    /// 节点角色状态变化
+    NodeRoleChanged {
+        location: String,
+        is_master_node: bool,
+        node_role: String,
+        master_info: serde_json::Value,
+        connection_status: serde_json::Value,
+        available_masters: Vec<serde_json::Value>,
+        timestamp: String,
+    },
 }
 
 impl SyncEvent {
     /// 获取当前时间戳字符串
-    fn now() -> String {
+    pub fn now() -> String {
         SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap()
@@ -107,9 +128,9 @@ impl SyncEvent {
     }
 }
 
-/// SSE 事件流处理器
+/// SSE 事件流处理器 - 同步事件
 ///
-/// GET /api/sync/events
+/// GET /api/sync/events/stream
 ///
 /// 返回 Server-Sent Events 流，实时推送同步事件
 pub async fn sync_events_handler() -> impl IntoResponse {
@@ -141,6 +162,57 @@ pub async fn sync_events_handler() -> impl IntoResponse {
         }
     });
 
+    // 返回 SSE 响应
+    Sse::new(event_stream).keep_alive(KeepAlive::default())
+}
+
+/// SSE 事件流处理器 - MQTT 订阅状态和节点角色状态
+///
+/// GET /api/mqtt/subscription/status/stream
+///
+/// 返回 Server-Sent Events 流，实时推送 MQTT 订阅状态和节点角色状态变化
+pub async fn mqtt_subscription_status_stream_handler(
+    _state: axum::extract::State<crate::web_server::AppState>,
+) -> impl IntoResponse {
+    use crate::web_server::sync_control_center::SYNC_EVENT_TX;
+    
+    // 订阅事件广播通道
+    let rx = SYNC_EVENT_TX.subscribe();
+    
+    // 将 broadcast receiver 转换为 Stream
+    let stream = BroadcastStream::new(rx);
+    
+    // 过滤只关注 MQTT 订阅状态和节点角色相关的事件
+    let event_stream = stream.filter_map(|result| async move {
+        match result {
+            Ok(event) => {
+                // 只处理 MQTT 订阅状态和节点角色相关的事件
+                match &event {
+                    SyncEvent::MqttSubscriptionStatusChanged { .. } |
+                    SyncEvent::NodeRoleChanged { .. } |
+                    SyncEvent::MqttConnected { .. } |
+                    SyncEvent::MqttDisconnected { .. } => {
+                        // 序列化事件为 JSON
+                        match serde_json::to_string(&event) {
+                            Ok(json) => Some(Ok::<_, Infallible>(
+                                Event::default().data(json).event("status"),
+                            )),
+                            Err(e) => {
+                                eprintln!("Failed to serialize SSE event: {}", e);
+                                None
+                            }
+                        }
+                    }
+                    _ => None, // 忽略其他事件
+                }
+            }
+            Err(e) => {
+                eprintln!("SSE broadcast error: {}", e);
+                None
+            }
+        }
+    });
+    
     // 返回 SSE 响应
     Sse::new(event_stream).keep_alive(KeepAlive::default())
 }

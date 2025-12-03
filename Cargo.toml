@@ -15,11 +15,21 @@ required-features = ["web_server"]
 [[bin]]
 name = "db_option_ui"
 path = "src/bin/db_option_ui/main.rs"
-required-features = ["web_server"]
+required-features = ["web_server", "eframe"]
 
 [[bin]]
-name = "test_dblist"
-path = "src/bin/test_dblist.rs"
+name = "remote_sync_gui"
+path = "src/bin/remote_sync_gui/main.rs"
+required-features = ["eframe", "web_server"]
+
+[[bin]]
+name = "init_test_db"
+path = "src/bin/init_test_db.rs"
+
+[[bin]]
+name = "remote_sync_smoke_test"
+path = "src/bin/remote_sync_smoke_test.rs"
+required-features = ["web_server"]
 
 # [[bin]]
 # name = "gen_xkt_new"
@@ -41,7 +51,6 @@ lazy_static = "1.4.0"
 approx = "0.5.1"
 #flate2 = "1.0.23"
 log = "0.4.17"
-env_logger = "0.11"
 
 # MQTT 服务器和客户端
 rumqttc = "0.25.0"
@@ -71,18 +80,16 @@ parry3d = { version = "0.25.0", features = [
 parry2d = { version = "0.25.0", features = [
     "serde-serialize",
 ] }
-parse_pdms_db = { git = "https://github.com/happyrust/aios-parse-pdms"}
+# parse_pdms_db = { git = "https://github.com/happyrust/aios-parse-pdms"}
+parse_pdms_db = { path = "../aios-parse-pdms" }
 aios_core = { git = "https://github.com/happyrust/rs-core.git" }
-surrealdb = { git = "https://gitee.com/happydpc/surrealdb", branch = "updated", default-features = false, features = [
-       "protocol-ws",
-       "kv-mem"
-   ] } 
 
 
 
 bevy_transform = { git = "https://github.com/happyrust/bevy", package = "bevy_transform", features = ["serialize",] }
 bevy_reflect = { git = "https://github.com/happyrust/bevy", package = "bevy_reflect" }
-pdms_io = { git = "https://github.com/happyrust/pdms-io.git" }
+# pdms_io = { git = "https://github.com/happyrust/pdms-io.git" }
+pdms_io = { path = "../pdms-io" }
 dpcsync = { git = "https://gitee.com/happydpc/dpc-sync.git" }
 # gen-xkt = { path = "../gen-xkt" }
 
@@ -104,7 +111,6 @@ glam = { version = "0.30.8", features = ["serde", "rkyv"] }
 cached = "0.56.0"
 rkyv = { version = "0.8.12", features = ["hashbrown-0_15"] }
 rfd = { version = "0.15.4", features = ["async-std"] }
-cavalier_contours = { git = "https://gitee.com/happydpc/cavalier_contours", features = ["serde"] }
 # redb = "3.0.1" # Removed - using SQLite for all storage
 
 image = { version = "0.24", default-features = false, features = ["png"] }
@@ -123,6 +129,10 @@ notify = "8.0.0"
 walkdir = "2.5.0"
 num_enum = "0.7.2"
 jsonxf = "1.1.1"
+sea-orm = { version = "1.1.1", features = [
+    "sqlx-mysql",
+    "runtime-async-std",
+], optional = true }
 async-once-cell = "0.5.3"
 petgraph = { version = "0.8.2", features = ["serde-1"] }
 tracing = "0.1.40"
@@ -155,6 +165,7 @@ tokio-stream = { version = "0.1", features = ["sync"] }
 thiserror = "1.0"
 jsonwebtoken = { version = "9.0", optional = true }
 async-trait = "0.1"
+env_logger = "0.11"
 
 # Web UI 相关依赖
 axum = { version = "0.8.6", optional = true, features = ["ws"] }
@@ -164,7 +175,7 @@ tower-http = { version = "0.6.6", features = ["fs", "cors"], optional = true }
 sysinfo = { version = "0.37.0", optional = true }
 
 # SQLite driver for spatial tests and cache
-rusqlite = { version = "0.33", features = ["bundled"], optional = true }
+rusqlite = { version = "0.32", features = ["bundled"], optional = true }
 indicatif = "0.18.1"
 rust_xlsxwriter = "0.91.0"
 
@@ -182,27 +193,39 @@ mqtt = []
 viewer = []                                                           #是否开启视图
 gen_model = ["aios_core/gen_model"]
 manifold = ["aios_core/manifold"]
+sql = ["dep:sea-orm", "dep:sqlx"]
 # debug_parse = ["pdms_io/debug_parse"]  # 暂时禁用以避免冲突
 surreal-save = []
-test = ["aios_core/test"]
 mem-kv-save = ["aios_core/mem-kv-save"]                              #额外保存PE数据到内存KV数据库
 project_hd = []
 project_hh = []
 profile = []                                                          #性能分析，包含tracing功能
-web_server = ["dep:axum", "dep:tower", "dep:tower-http", "dep:sysinfo", "dep:axum-extra", "aios_core/web_server"]              #Web UI功能
+web_server = ["dep:axum", "mqtt", "dep:tower", "dep:tower-http", "dep:sysinfo", "dep:axum-extra", "aios_core/web_server", "dep:jsonwebtoken"]              #Web UI功能
 sqlite-index = ["dep:rusqlite", "aios_core/sqlite"]
 debug_e3d = []
-
-# 查询提供者选择 (用于模型生成时的层级查询)
-query-surreal = []                          # 使用 SurrealDB 查询 (默认)
 
 [build-dependencies]
 cc = { version = "1.0", features = ["parallel"] }
 # tonic-build = "0.14.2"  # 移到 grpc feature 中
 # prost-build = "0.14.1"  # 移到 grpc feature 中
 
-[dev-dependencies]
-tempfile = "3"
+[dependencies.sqlx]
+version = "0.8.6"
+default-features = false
+optional = true
+features = [
+    "runtime-tokio-rustls",
+    #    "runtime-async-std-native-tls",
+    "macros",
+    "mysql",
+    # "tls",
+    "chrono",
+    "json",
+    # "decimal",
+    "bigdecimal",
+    "uuid",
+    "time",
+]
 
 
 #[profile.release]
@@ -216,7 +239,7 @@ tempfile = "3"
 # aios_core = { path = "../rs-core" }
 
 # [patch."https://gitee.com/happydpc/aios-parse-pdms.git"]
-# parse_pdms_db = { path = "../aios-parse-pdms-fork" }
+# parse_pdms_db = { path = "../aios-parse-pdms" }
 
 # [patch."https://gitee.com/happydpc/pdms-io.git"]
 # pdms_io = { path = "../pdms-io" }
@@ -244,7 +267,3 @@ eframe = { git = "https://github.com/emilk/egui.git", rev = "fa4cfec777c9ea21b86
 
 [patch."https://github.com/happyrust/rs-core.git"]
 aios_core = { path = "../rs-core"}
-
-
-[patch."https://gitee.com/happydpc/rust-ploop-processor.git"]   
-ploop-rs = { path = "../rust-ploop-processor/ploop-rs" }

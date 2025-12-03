@@ -9,7 +9,9 @@
     "test-xkt": "cd tests && npm test",
     "test-xkt-auto": "./tests/run-test.sh",
     "test-room-api": "node test_room_api.js",
-    "test-real-room-api": "node test_real_room_api.js"
+    "test-real-room-api": "node test_real_room_api.js",
+    "build": "cd frontend && npm run build",
+    "build:frontend": "cd frontend && npm run build"
   },
   "keywords": [
     "xkt",

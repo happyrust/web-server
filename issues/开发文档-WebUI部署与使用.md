@@ -237,7 +237,7 @@ export PORT=8080; cargo run --bin web_server
 
 ### 10.3 后端接口（REST）
 - 连接体检：`GET /api/database/connection/check`
-  - 实现：`src/web_server/handlers.rs:4700` 调用 `check_surrealdb_connection` → 端口是否在监听 + `SELECT 1` 探活
+  - 实现：`src/web_server/handlers.rs:4700` 调用 `check_surrealdb_connection` → 端口是否在监听 + `return 1` 探活
 - 启动脚本列表：`GET /api/database/startup-scripts`
   - 实现：`src/web_server/handlers.rs:4722` 扫描 `cmd/` 目录的 `surreal*.sh`，并标记可执行权限
 - 用脚本启动实例：`POST /api/database/start-instance`（body: `{ script_path, port }`）

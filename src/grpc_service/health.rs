@@ -50,7 +50,7 @@ impl HealthChecker for DatabaseHealthChecker {
         let start = Instant::now();
         let mut details = HashMap::new();
 
-        match sqlx::query("SELECT 1").fetch_one(&*self.db_pool).await {
+        match sqlx::query("return 1").fetch_one(&*self.db_pool).await {
             Ok(_) => {
                 let response_time = start.elapsed();
                 details.insert(

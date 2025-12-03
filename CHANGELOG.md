@@ -1,57 +1,84 @@
 # Changelog
 
-## 2025-11-27
-
-### Fixed
-- **修复 `has_tubi` 字段反序列化错误问题**
-  - 问题：数据库中某些 `SPdmsElement` 记录的 `has_tubi` 字段为 null，而不是期望的 bool 类型，导致反序列化失败
-  - 错误信息：`Failed to deserialize field 'has_tubi' on type 'SPdmsElement': Expected bool, got none`
-  - 修复方案：
-    - 从 [`../rs-core/src/types/pe.rs`](../rs-core/src/types/pe.rs:26) 中移除了 `has_tubi` 字段定义
-    - 从 [`../rs-core/src/rs_surreal/inst_structs.rs`](../rs-core/src/rs_surreal/inst_structs.rs:85) 中移除了 `TubiRelate::to_surql` 方法中对 `has_tubi = true` 的设置
-    - 修改了 [`src/fast_model/cata_model.rs`](src/fast_model/cata_model.rs:1633) 中的代码，移除了对 `has_tubi` 字段的更新逻辑，改为直接使用 `tubi_relate` 表判断
-    - 修复了 [`src/dblist_parser/db_loader.rs`](src/dblist_parser/db_loader.rs:49) 中的导入路径问题
-  - 影响：解决了 `cargo run --bin aios-database` 编译和运行时的反序列化错误
-  - 相关提交：gen-model@f41002f4, rs-core@2dd7c11
+## 2025-12-01
 
 ### Changed
-- **优化 tubi 关系查询逻辑**
-  - 不再依赖 `has_tubi` 字段来判断是否有 tubi 关系
-  - 直接使用 `tubi_relate` 表的 `in` 字段来判断，更加可靠和准确
-  - [`../rs-core/src/rs_surreal/inst.rs`](../rs-core/src/rs_surreal/inst.rs:71) 中的 `query_tubi_insts_by_brans` 函数已经使用这种方式查询
-  - 提高了数据一致性和查询性能
+- **重构 PdmsWatcher 文件路径映射**
+  - `pdms-io/src/watch.rs`: 重命名 `file_name_full_path_map` 为 `db_path_map`
+  - 添加 `is_valid_e3d_db_file()` 过滤函数，只扫描无扩展名的有效 E3D 数据库文件
+  - 新增 `get_db_path()` 和 `insert_db_path()` 方法，key 统一使用 UPPERCASE 保证存取一致性
+  - `src/data_interface/db_model.rs`: 使用 `watcher.get_db_path()` 替代直接访问 map
+  - `src/data_interface/increment_manager.rs`: 使用 `watcher.insert_db_path()` 替代直接 insert
 
-## 2025-11-26
+- **改进拓扑可视化连接显示**
+  - `frontend/src/components/views/TopologyVisualization.vue`: 
+    - 从 `/api/topology` 加载拓扑配置，显示所有配置的主从连接
+    - 用不同颜色区分连接状态：绿色(已订阅)、蓝色(在线未订阅)、灰色虚线(离线)
+    - 合并 MQTT 节点状态和拓扑配置节点，确保所有配置的节点都显示
+
+## 2025-11-18
 
 ### Added
-- **为 `test_full_boolean_flow` 添加 OBJ 模型导出功能**
-  - 功能：在布尔运算完成后自动导出布尔前后的 OBJ 模型用于可视化验证
-  - 实现位置：`src/bin/test_full_boolean_flow.rs`
-  - 新增函数：`get_mesh_dir_with_lod()` - 根据配置获取正确的 LOD mesh 目录
-  - 导出文件：
-    - `test_output/boolean_exports/before_boolean_{refno}.obj` - 布尔运算前的正实体
-    - `test_output/boolean_exports/after_boolean_{refno}.obj` - 布尔运算后的结果
-  - 用途：
-    - 可在 Blender、MeshLab 等 3D 软件中打开查看
-    - 对比布尔运算前后的几何变化
-    - 验证负实体是否正确被减去
-  - 依赖：`aios_database::fast_model::export_model::export_obj::export_obj_for_refnos`
+- **持久化远程同步任务队列**
+  - `src/data_interface/increment_manager.rs`: 新增 `assets/pending_sync_tasks.json` 队列，`enqueue_generated_sync_tasks` 在 REMOTE_RUNTIME/SQLite 不可用或写入失败时自动落盘并在下一次触发时重试，彻底避免网络抖动造成的增量包丢失。
+
+- **增强同步任务元数据追踪**
+  - `GeneratedSyncArtifact` 结构体扩展字段：
+    - `db_num`: 数据库编号
+    - `db_path`: 数据库文件路径
+    - `old_sesno` / `new_sesno`: 会话号范围（旧值/新值）
+    - `session_range`: 格式化的会话范围字符串（如 "1-100" 或 "50-60"）
+    - `generated_at`: 任务生成时间戳
+    - `is_full_sync`: 标记是否为全量同步（新文件）
+  - 新增文件自动标记为全量同步，会话范围为 `1-{当前sesno}`
+  - 增量文件标记为增量同步，会话范围为 `{old_sesno+1}-{new_sesno}`
+
+- **MQTT 发送重试机制**
+  - `src/data_interface/increment_manager.rs`: 新增 `publish_sync_payload_with_retry` 函数
+  - 最多重试 3 次，指数退避延迟（500ms / 1000ms / 1500ms）
+  - 所有 MQTT 发布调用统一使用重试机制，提高网络不稳定环境下的可靠性
 
 ### Changed
-- **更新完整布尔运算测试指南**
-  - 文件：`llmdoc/guides/complete_boolean_test_guide.md`
-  - 更新内容：
-    - 在测试流程中添加"步骤 4: 导出 OBJ 模型"
-    - 更新测试输出示例，包含 OBJ 导出日志
-    - 添加输出文件路径和使用说明
-    - 在总结部分添加 OBJ 相关的关键指标和成功标准
-  - 新增章节：详细说明如何导出和查看 OBJ 模型
+- **文件监听链路增加去抖与幂等保护**
+  - `src/data_interface/increment_manager.rs`: `async_watch` 现对同一路径 500ms 内的重复事件直接忽略，并在 `Ok(false)` 时不再刷新 headers，确保频繁保存或空增量场景不会错过后续同步机会。
+  - 去抖窗口常量 `FILE_EVENT_DEBOUNCE_MS = 500`
 
-### Documentation
-- **新增 `llmdoc/agent/boolean_obj_export_implementation.md`**
-  - 完整记录 OBJ 导出功能的实现细节
-  - 包含技术实现、使用方法、示例输出
-  - 提供后续改进建议
+- **同步任务描述增强**
+  - `try_enqueue_sync_tasks` 在生成任务注释时，优先使用 `session_range`，包含 DB 编号、会话范围、文件名、目标站点等详细信息
+  - 改进日志输出，便于运维人员快速识别同步任务类型和范围
+
+### Fixed
+- **新文件全量导入修复**
+  - 修复新增 DB 文件无法自动触发全量导入的问题
+  - 新文件检测时自动将 `1..=current_sesno` 范围加入 `params`，确保 `execute_incr_update` 被调用
+  - 生成的 artifact 正确标记 `is_full_sync: true` 和 `session_range: "1-{sesno}"`
+
+- **Feature Gate 修复**
+  - 将新文件 CBA 生成的条件编译从 `#[cfg(feature = "mqtt")]` 改为 `#[cfg(any(feature = "mqtt", feature = "web_server"))]`
+  - 确保仅启用 `web_server` 特性时也能正常生成同步归档
+
+- **远程同步推送更可靠**
+  - MQTT 发布失败时记录详细错误日志，不再直接 panic
+  - 新增的同步任务在队列写入失败时会提示具体原因，便于快速排查
+  - 增量检测过程中，所有生成的 artifact 都包含完整元数据（包括 `db_num`, `session_range`, `is_full_sync` 等），避免信息丢失
+  - 任务描述 notes 包含"全量同步"或"增量同步"标签，便于运维识别
+
+## 2025-11-07
+
+### Fixed
+- **增量同步的返回语义和错误处理一致化**
+  - `src/data_interface/increment_manager.rs`：`execute_incr_update` 现在根据是否真正写入增量返回 `Ok(true/false)`，并在 sesno 范围为空、集合为空的场景跳过数据库写入，避免调用方误判。
+  - 同一函数在更新 `db_file_info` 时加入错误捕获，防止 SurrealDB 异常导致监听任务 panic。
+- **缺失会话号记录时的全量补齐**
+  - `init_watcher` 在 `dbnum_info_table` 没有记录或返回 0 时，不再直接 `continue`，会打印提示并自动从 `sesno=1` 起补齐；同时对 “nearest sesno” 逻辑做了边界保护，避免越界区间。
+- **文件监听链路错误兜底**
+  - `async_watch`：对 Pdms 头扫描结果转为 `Vec` 避免所有权问题；更新增量区间时重新拉取数据库最新 sesno 并做 `start_sesno` 校验；增量完成后若返回 `Ok(false)` 也会同步 headers，防止下一次重复触发。
+  - 重新生成 CBA、查询 `e3d_sync`、记录 MQTT 推送等关键步骤全部改为 `match` 处理并输出中文错误日志，出现失败时跳过当前文件而不是整体崩溃。
+
+### Changed
+- **日志与提示更贴合运维**
+  - 启动阶段会明确打印“数据库缺少 db_no 记录，准备从头导入”。
+  - 新增文件及增量推送流程对每一步都补充了中文上下文，便于排查现场问题。
 
 ## 2025-10-27
 

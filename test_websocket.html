@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebSocket 增量更新测试</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background: #1e293b;
+            color: #e2e8f0;
+        }
+        h1 {
+            color: #60a5fa;
+            border-bottom: 2px solid #3b82f6;
+            padding-bottom: 10px;
+        }
+        .status {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 5px;
+            font-weight: bold;
+        }
+        .connected {
+            background: #10b981;
+            color: white;
+        }
+        .disconnected {
+            background: #ef4444;
+            color: white;
+        }
+        .connecting {
+            background: #f59e0b;
+            color: white;
+        }
+        .controls {
+            margin: 20px 0;
+            display: flex;
+            gap: 10px;
+        }
+        button {
+            padding: 10px 20px;
+            background: #3b82f6;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: background 0.3s;
+        }
+        button:hover {
+            background: #2563eb;
+        }
+        button:disabled {
+            background: #64748b;
+            cursor: not-allowed;
+        }
+        .logs {
+            background: #0f172a;
+            border: 1px solid #334155;
+            border-radius: 5px;
+            padding: 15px;
+            max-height: 500px;
+            overflow-y: auto;
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+        }
+        .log-entry {
+            margin: 5px 0;
+            padding: 5px;
+            border-left: 3px solid #475569;
+        }
+        .log-entry.info {
+            border-left-color: #3b82f6;
+            color: #93c5fd;
+        }
+        .log-entry.success {
+            border-left-color: #10b981;
+            color: #6ee7b7;
+        }
+        .log-entry.warning {
+            border-left-color: #f59e0b;
+            color: #fbbf24;
+        }
+        .log-entry.error {
+            border-left-color: #ef4444;
+            color: #fca5a5;
+        }
+        .timestamp {
+            color: #64748b;
+            font-size: 11px;
+        }
+        .message-data {
+            background: #1e293b;
+            border: 1px solid #334155;
+            padding: 10px;
+            margin: 5px 0;
+            border-radius: 3px;
+            overflow-x: auto;
+        }
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin: 20px 0;
+        }
+        .stat-card {
+            background: #334155;
+            padding: 15px;
+            border-radius: 5px;
+            border-left: 4px solid #3b82f6;
+        }
+        .stat-label {
+            color: #94a3b8;
+            font-size: 12px;
+            text-transform: uppercase;
+            margin-bottom: 5px;
+        }
+        .stat-value {
+            font-size: 24px;
+            font-weight: bold;
+            color: #e2e8f0;
+        }
+    </style>
+</head>
+<body>
+    <h1>🔌 WebSocket 增量更新实时测试</h1>
+
+    <div id="status" class="status connecting">正在初始化...</div>
+
+    <div class="controls">
+        <button onclick="connectWs()">连接 WebSocket</button>
+        <button onclick="disconnectWs()">断开连接</button>
+        <button onclick="requestTaskList()">获取任务列表</button>
+        <button onclick="triggerDetection()">手动触发检测</button>
+        <button onclick="clearLogs()">清空日志</button>
+    </div>
+
+    <div class="stats">
+        <div class="stat-card">
+            <div class="stat-label">消息接收总数</div>
+            <div class="stat-value" id="messageCount">0</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">活跃任务数</div>
+            <div class="stat-value" id="activeTaskCount">0</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-label">最后更新</div>
+            <div class="stat-value" id="lastUpdate">--:--:--</div>
+        </div>
+    </div>
+
+    <h2>📋 消息日志</h2>
+    <div id="logs" class="logs"></div>
+
+    <script>
+        let ws = null;
+        let messageCount = 0;
+        let reconnectAttempts = 0;
+        const maxReconnectAttempts = 5;
+
+        function updateStatus(text, className) {
+            const statusEl = document.getElementById('status');
+            statusEl.textContent = text;
+            statusEl.className = 'status ' + className;
+        }
+
+        function addLog(message, type = 'info', data = null) {
+            const logsEl = document.getElementById('logs');
+            const entry = document.createElement('div');
+            entry.className = 'log-entry ' + type;
+
+            const timestamp = new Date().toLocaleTimeString('zh-CN', { hour12: false });
+            let html = `<span class="timestamp">[${timestamp}]</span> ${message}`;
+
+            if (data) {
+                html += '<div class="message-data">' + JSON.stringify(data, null, 2) + '</div>';
+            }
+
+            entry.innerHTML = html;
+            logsEl.insertBefore(entry, logsEl.firstChild);
+
+            // 限制日志数量
+            while (logsEl.children.length > 100) {
+                logsEl.removeChild(logsEl.lastChild);
+            }
+        }
+
+        function updateStats() {
+            document.getElementById('messageCount').textContent = messageCount;
+            document.getElementById('lastUpdate').textContent = new Date().toLocaleTimeString('zh-CN', { hour12: false });
+        }
+
+        function connectWs() {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                addLog('WebSocket 已连接，无需重复连接', 'warning');
+                return;
+            }
+
+            // 连接到多任务订阅端点
+            const wsUrl = 'ws://localhost:8080/ws/tasks';
+            addLog(`正在连接到 ${wsUrl}...`, 'info');
+            updateStatus('正在连接...', 'connecting');
+
+            try {
+                ws = new WebSocket(wsUrl);
+
+                ws.onopen = () => {
+                    addLog('✅ WebSocket 连接成功！', 'success');
+                    updateStatus('已连接', 'connected');
+                    reconnectAttempts = 0;
+                };
+
+                ws.onmessage = (event) => {
+                    messageCount++;
+                    updateStats();
+
+                    try {
+                        const data = JSON.parse(event.data);
+                        const msgType = data.type || 'unknown';
+
+                        switch(msgType) {
+                            case 'handshake':
+                                addLog(`🤝 握手成功: ${data.message}`, 'success', data);
+                                if (data.active_tasks) {
+                                    document.getElementById('activeTaskCount').textContent = data.active_tasks.length;
+                                }
+                                break;
+
+                            case 'task_list':
+                                addLog(`📋 任务列表更新 (${data.tasks?.length || 0} 个任务)`, 'info', data);
+                                document.getElementById('activeTaskCount').textContent = data.tasks?.length || 0;
+                                break;
+
+                            case 'subscribed':
+                                addLog(`✅ 已订阅任务: ${data.task_id}`, 'success');
+                                break;
+
+                            case 'unsubscribed':
+                                addLog(`⛔ 已取消订阅任务: ${data.task_id}`, 'warning');
+                                break;
+
+                            case 'warning':
+                                addLog(`⚠️ 警告: ${data.message}`, 'warning');
+                                break;
+
+                            default:
+                                // 进度更新消息
+                                if (data.task_id && data.status) {
+                                    const { task_id, status, percentage, current_step, message } = data;
+                                    const progressInfo = `${percentage || 0}% - ${current_step || message || '进度更新'}`;
+
+                                    let logType = 'info';
+                                    if (status === 'Completed') logType = 'success';
+                                    else if (status === 'Failed') logType = 'error';
+
+                                    addLog(`🔄 [${task_id}] ${status}: ${progressInfo}`, logType, data);
+                                } else {
+                                    addLog(`📨 收到消息: ${msgType}`, 'info', data);
+                                }
+                        }
+                    } catch (error) {
+                        addLog(`❌ 解析消息失败: ${error.message}`, 'error');
+                        console.error('Parse error:', error, event.data);
+                    }
+                };
+
+                ws.onerror = (error) => {
+                    addLog(`❌ WebSocket 错误`, 'error', error);
+                    console.error('WebSocket error:', error);
+                };
+
+                ws.onclose = (event) => {
+                    addLog(`🔌 WebSocket 连接已关闭 (代码: ${event.code}, 原因: ${event.reason || '无'})`, 'warning');
+                    updateStatus('已断开', 'disconnected');
+
+                    // 尝试重连
+                    if (reconnectAttempts < maxReconnectAttempts) {
+                        const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 30000);
+                        addLog(`⏱️ 将在 ${delay}ms 后尝试重连 (第 ${reconnectAttempts + 1}/${maxReconnectAttempts} 次)`, 'info');
+
+                        setTimeout(() => {
+                            reconnectAttempts++;
+                            connectWs();
+                        }, delay);
+                    } else {
+                        addLog(`❌ 已达到最大重连次数 (${maxReconnectAttempts})`, 'error');
+                    }
+                };
+            } catch (error) {
+                addLog(`❌ 创建 WebSocket 连接失败: ${error.message}`, 'error');
+                updateStatus('连接失败', 'disconnected');
+            }
+        }
+
+        function disconnectWs() {
+            if (ws) {
+                addLog('正在断开连接...', 'info');
+                ws.close();
+                ws = null;
+            } else {
+                addLog('未连接', 'warning');
+            }
+        }
+
+        function sendCommand(command) {
+            if (!ws || ws.readyState !== WebSocket.OPEN) {
+                addLog('❌ 未连接到 WebSocket', 'error');
+                return false;
+            }
+
+            try {
+                ws.send(JSON.stringify(command));
+                addLog(`📤 发送命令: ${command.action}`, 'info', command);
+                return true;
+            } catch (error) {
+                addLog(`❌ 发送命令失败: ${error.message}`, 'error');
+                return false;
+            }
+        }
+
+        function requestTaskList() {
+            sendCommand({ action: 'list' });
+        }
+
+        async function triggerDetection() {
+            try {
+                addLog('🔍 正在触发手动检测...', 'info');
+                const response = await fetch('http://localhost:8080/api/incremental/detect/default', {
+                    method: 'POST'
+                });
+                const result = await response.json();
+                addLog('✅ 检测触发成功', 'success', result);
+            } catch (error) {
+                addLog(`❌ 触发检测失败: ${error.message}`, 'error');
+            }
+        }
+
+        function clearLogs() {
+            document.getElementById('logs').innerHTML = '';
+            addLog('🗑️ 日志已清空', 'info');
+        }
+
+        // 页面加载时自动连接
+        window.onload = () => {
+            addLog('🚀 页面加载完成', 'info');
+            setTimeout(connectWs, 500);
+        };
+
+        // 页面卸载时关闭连接
+        window.onbeforeunload = () => {
+            if (ws) {
+                ws.close();
+            }
+        };
+    </script>
+</body>
+</html>

@@ -1,0 +1,83 @@
+/* 增量更新实时监控仪表盘样式 */
+
+/* Alpine.js x-cloak 隐藏 */
+[x-cloak] {
+    display: none !important;
+}
+
+/* 平滑过渡 */
+* {
+    transition: all 0.2s ease-in-out;
+}
+
+/* 卡片悬停效果 */
+.shadow:hover {
+    box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+}
+
+/* 进度条动画 */
+.bg-blue-600 {
+    transition: width 0.3s ease-in-out;
+}
+
+/* Toast通知动画 */
+.fixed.top-20.right-6 {
+    animation: slideIn 0.3s ease-out;
+}
+
+@keyframes slideIn {
+    from {
+        transform: translateX(100%);
+        opacity: 0;
+    }
+    to {
+        transform: translateX(0);
+        opacity: 1;
+    }
+}
+
+/* 统计卡片 */
+.grid > .bg-white {
+    min-height: 120px;
+}
+
+/* 按钮禁用状态 */
+button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* 旋转动画（用于刷新按钮） */
+@keyframes spin {
+    from {
+        transform: rotate(0deg);
+    }
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+.fa-spin {
+    animation: spin 1s linear infinite;
+}
+
+/* 响应式调整 */
+@media (max-width: 768px) {
+    .grid {
+        grid-template-columns: 1fr;
+    }
+
+    .text-2xl {
+        font-size: 1.5rem;
+    }
+}
+
+/* 任务列表项悬停 */
+.border.rounded-lg.p-3:hover {
+    border-color: #3b82f6;
+}
+
+/* 事件图标对齐 */
+.flex.items-start i {
+    min-width: 20px;
+}

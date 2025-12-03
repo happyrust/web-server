@@ -1,6 +1,6 @@
 /// 统一页面布局（顶部导航 + 左侧栏 + 主内容）
 /// 使用 simple-tailwind.css + ui.css + simple-icons.css
-/// active_nav 取值建议："home"|"dashboard"|"tasks"|"batch"|"config"|"db-status"|"sqlite-spatial"|"wizard"|"db-conn"
+/// active_nav 取值建议："home"|"dashboard"|"tasks"|"batch"|"config"|"db-status"|"sqlite-spatial"|"wizard"|"remote-sync"|"sync-control"|"db-conn"
 pub fn render_layout_with_sidebar(
     title: &str,
     active_nav: Option<&str>,
@@ -58,6 +58,7 @@ pub fn render_layout_with_sidebar(
         <a class="nav-item {spatial_active}" href="/sqlite-spatial"><span class="icon fas fa-vector-square app-icon"></span> 空间查询</a>
         <a class="nav-item {wizard_active}" href="/wizard"><span class="icon fas fa-magic app-icon"></span> 解析向导</a>
         <a class="nav-item {remote_active}" href="/remote-sync"><span class="icon fas fa-project-diagram app-icon"></span> 异地环境</a>
+        <a class="nav-item {synccontrol_active}" href="/sync-control"><span class="icon fas fa-sync-alt app-icon"></span> 同步控制</a>
       </nav>
       <div class="nav-group">工具</div>
       <nav class="nav-list">
@@ -91,6 +92,7 @@ pub fn render_layout_with_sidebar(
         .replace("{spatial_active}", is_active("sqlite-spatial"))
         .replace("{wizard_active}", is_active("wizard"))
         .replace("{remote_active}", is_active("remote-sync"))
+        .replace("{synccontrol_active}", is_active("sync-control"))
         .replace("{dbconn_active}", is_active("db-conn"))
         .replace("{xkt_test_active}", is_active("xkt-test"))
         .replace("{content}", content_html)

@@ -1,8 +1,23 @@
 use eframe::egui;
-use re_ui::UiExt as _;
 
 use crate::app::ConfigApp;
 use crate::models::{StatusKind, StatusMessage};
+
+// 简单的替代实现，替代 re_ui::UiExt
+trait UiExt {
+    fn info_label(&mut self, text: &str);
+    fn error_label(&mut self, text: &str);
+}
+
+impl UiExt for egui::Ui {
+    fn info_label(&mut self, text: &str) {
+        self.label(egui::RichText::new(text).color(egui::Color32::from_rgb(33, 150, 243)));
+    }
+
+    fn error_label(&mut self, text: &str) {
+        self.label(egui::RichText::new(text).color(egui::Color32::from_rgb(244, 67, 54)));
+    }
+}
 
 fn render_unsaved_badge(ui: &mut egui::Ui) {
     let text = "● 未保存改动";

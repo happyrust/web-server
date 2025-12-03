@@ -67,7 +67,6 @@ pub mod api;
 pub mod cata;
 pub mod consts;
 pub mod data_interface;
-pub mod dblist_parser;
 pub mod expression_fix;
 pub mod tables;
 // pub mod ssc;
@@ -256,6 +255,10 @@ pub async fn run_cli(db_option_ext: options::DbOptionExt) -> anyhow::Result<()> 
     }
 
     let mgr = Arc::new(AiosDBManager::init_form_config().await?);
+
+    /// 启动失败任务重试worker
+    mgr.clone().start_retry_worker().await;
+
     /// 创建db manager
     if sync_live {
         mgr.init_watcher().await?;

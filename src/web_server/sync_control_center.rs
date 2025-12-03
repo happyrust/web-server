@@ -35,6 +35,23 @@ pub static SYNC_EVENT_TX: Lazy<broadcast::Sender<SyncEvent>> = Lazy::new(|| {
 pub static SYNC_CONTROL_CENTER: Lazy<Arc<RwLock<SyncControlCenter>>> =
     Lazy::new(|| Arc::new(RwLock::new(SyncControlCenter::new())));
 
+/// MQTT 服务器进程句柄（用于启动/停止控制）
+pub static MQTT_SERVER_PROCESS: Lazy<Arc<RwLock<Option<tokio::process::Child>>>> =
+    Lazy::new(|| Arc::new(RwLock::new(None)));
+
+/// MQTT Broker 日志缓冲区（最多保存最近 500 条日志）
+pub static MQTT_BROKER_LOGS: Lazy<Arc<RwLock<Vec<MqttBrokerLog>>>> =
+    Lazy::new(|| Arc::new(RwLock::new(Vec::new())));
+
+const MAX_LOG_ENTRIES: usize = 500;
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct MqttBrokerLog {
+    pub time: String,
+    pub level: String,
+    pub message: String,
+}
+
 // ========= 数据结构定义 =========
 
 // Re-export SyncEvent from sse_handlers to avoid duplication
@@ -158,9 +175,10 @@ pub enum SyncTaskStatus {
 }
 
 /// 同步配置
+/// 注意：env_id 已移除，统一使用 DbOption.location 作为站点标识
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct SyncConfig {
-    pub env_id: String,
     pub auto_retry: bool,
     pub max_retries: u32,
     pub retry_delay_ms: u64,
@@ -174,7 +192,6 @@ pub struct SyncConfig {
 impl Default for SyncConfig {
     fn default() -> Self {
         Self {
-            env_id: String::new(),
             auto_retry: true,
             max_retries: 3,
             retry_delay_ms: 5000,
@@ -187,7 +204,20 @@ impl Default for SyncConfig {
     }
 }
 
+/// 获取当前站点标识（使用 DbOption.location）
+pub fn get_location() -> String {
+    aios_core::get_db_option().location.clone()
+}
+
 // ========= 同步控制中心 =========
+
+/// 日志条目
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LogEntry {
+    pub timestamp: SystemTime,
+    pub level: String,
+    pub message: String,
+}
 
 pub struct SyncControlCenter {
     /// 当前状态
@@ -204,6 +234,10 @@ pub struct SyncControlCenter {
     pub mqtt_server: Option<MqttServerState>,
     /// 后台处理任务
     pub worker_handle: Option<JoinHandle<()>>,
+    /// 日志缓冲区（最近500条）
+    pub logs: Vec<LogEntry>,
+    /// 进度广播中心（用于 WebSocket 实时推送）
+    pub progress_hub: Option<Arc<crate::shared::ProgressHub>>,
 }
 
 /// MQTT服务器状态
@@ -226,31 +260,61 @@ impl SyncControlCenter {
             history: Vec::new(),
             mqtt_server: None,
             worker_handle: None,
+            logs: Vec::new(),
+            progress_hub: None, // 初始化时为 None，由 web_server 启动时设置
         }
     }
 
+    /// 添加日志条目
+    pub fn add_log(&mut self, level: &str, message: String) {
+        let entry = LogEntry {
+            timestamp: SystemTime::now(),
+            level: level.to_string(),
+            message,
+        };
+
+        self.logs.push(entry);
+
+        // 只保留最近500条日志
+        if self.logs.len() > 500 {
+            self.logs.drain(0..self.logs.len() - 500);
+        }
+    }
+
+    /// 获取最近的日志
+    pub fn get_logs(&self, limit: usize) -> Vec<LogEntry> {
+        let start = if self.logs.len() > limit {
+            self.logs.len() - limit
+        } else {
+            0
+        };
+        self.logs[start..].to_vec()
+    }
+
     /// 启动同步服务
-    pub async fn start(&mut self, env_id: String) -> anyhow::Result<()> {
+    /// 使用 DbOption.location 作为站点标识
+    pub async fn start(&mut self) -> anyhow::Result<()> {
         if self.state.is_running {
             return Err(anyhow::anyhow!("同步服务已在运行"));
         }
 
+        let location = get_location();
+        
         // 停止现有运行时
         crate::web_server::remote_runtime::stop_runtime().await;
 
         // 启动新运行时
-        crate::web_server::remote_runtime::start_runtime(env_id.clone()).await?;
+        crate::web_server::remote_runtime::start_runtime(location.clone()).await?;
 
         // 更新状态
         self.state.is_running = true;
-        self.state.current_env = Some(env_id.clone());
+        self.state.current_env = Some(location.clone());
         self.state.started_at = Some(SystemTime::now());
-        self.config.env_id = env_id.clone();
         self.spawn_worker();
 
         // 发送启动事件
         let _ = SYNC_EVENT_TX.send(SyncEvent::Started {
-            env_id,
+            env_id: location,
             timestamp: chrono::Utc::now().to_rfc3339(),
         });
 
@@ -320,11 +384,13 @@ impl SyncControlCenter {
             notes,
         } = params;
 
+        // 使用传入的 env_id，如果没有则使用当前站点的 location
         let effective_env = env_id.or_else(|| {
-            if self.config.env_id.is_empty() {
+            let location = get_location();
+            if location.is_empty() {
                 None
             } else {
-                Some(self.config.env_id.clone())
+                Some(location)
             }
         });
 
@@ -1190,31 +1256,287 @@ async fn refresh_remote_site_metadata(destination: &SyncDestination) -> anyhow::
 
 // ========= MQTT 服务器管理 =========
 
-/// 启动内嵌 MQTT 服务器 (需要单独的 rumqttd 项目)
-pub async fn start_mqtt_server(port: u16) -> anyhow::Result<()> {
-    // TODO: 将来集成独立的 rumqttd 服务器
-    // 目前可以使用外部 MQTT 服务器或启动单独的 rumqttd 进程
+/// 解析 rumqttd 配置文件路径（支持便携式部署）
+pub fn resolve_rumqttd_config_path() -> anyhow::Result<std::path::PathBuf> {
+    use std::env;
 
-    // 更新状态为模拟状态
+    // 1. 优先检查可执行文件同目录下的 rumqttd.toml（便携式部署，最高优先级）
+    if let Ok(exe_path) = env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            let exe_config_path = exe_dir.join("rumqttd.toml");
+            if exe_config_path.exists() {
+                return Ok(exe_config_path);
+            }
+        }
+    }
+
+    // 2. 尝试当前工作目录
+    let current_dir = env::current_dir()?;
+    let current_config_path = current_dir.join("rumqttd.toml");
+    if current_config_path.exists() {
+        return Ok(current_config_path);
+    }
+
+    // 3. 尝试 remote-test-dir/test-real/rumqttd.toml（开发环境）
+    let dev_config_path = current_dir
+        .join("remote-test-dir")
+        .join("test-real")
+        .join("rumqttd.toml");
+    if dev_config_path.exists() {
+        return Ok(dev_config_path);
+    }
+
+    // 4. 如果都找不到，返回可执行文件同目录的路径（会在启动时失败，但至少不会编译错误）
+    if let Ok(exe_path) = env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            return Ok(exe_dir.join("rumqttd.toml"));
+        }
+    }
+
+    Err(anyhow::anyhow!("无法找到 rumqttd.toml 配置文件"))
+}
+
+/// 解析 rumqttd 可执行文件路径（支持便携式部署）
+fn resolve_rumqttd_binary() -> anyhow::Result<std::path::PathBuf> {
+    use std::env;
+
+    let binary_name = if cfg!(windows) {
+        "rumqttd.exe"
+    } else {
+        "rumqttd"
+    };
+
+    // 1. 优先检查可执行文件同目录下的 rumqttd.exe（便携式部署，最高优先级）
+    if let Ok(exe_path) = env::current_exe() {
+        if let Some(exe_dir) = exe_path.parent() {
+            let exe_binary_path = exe_dir.join(binary_name);
+            if exe_binary_path.exists() {
+                return Ok(exe_binary_path);
+            }
+        }
+    }
+
+    // 2. 尝试从 PATH 查找（系统安装）
+    Ok(std::path::PathBuf::from(binary_name))
+}
+
+/// 启动 MQTT 服务器 (使用 rumqttd)
+pub async fn start_mqtt_server(port: u16) -> anyhow::Result<()> {
+    use std::env;
+    use tokio::process::Command;
+
+    // 检查是否已经在运行
+    {
+        let process_guard = MQTT_SERVER_PROCESS.read().await;
+        if process_guard.is_some() {
+            return Err(anyhow::anyhow!("MQTT 服务器已经在运行中"));
+        }
+    }
+
+    // 解析配置文件路径（支持便携式部署）
+    let config_path = resolve_rumqttd_config_path()?;
+
+    // 检查配置文件是否存在
+    if !config_path.exists() {
+        return Err(anyhow::anyhow!(
+            "MQTT 配置文件不存在: {}",
+            config_path.display()
+        ));
+    }
+
+    // 解析可执行文件路径（支持便携式部署）
+    let rumqttd_bin = resolve_rumqttd_binary()?;
+
+    // 获取配置文件所在目录作为工作目录
+    let config_dir = config_path
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("配置文件路径无效"))?;
+
+    // 启动 rumqttd 进程
+    let mut child = Command::new(&rumqttd_bin)
+        .arg("-c")
+        .arg(&config_path)
+        .arg("-vv")
+        .current_dir(config_dir)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .context(format!(
+            "无法启动 rumqttd，请确保已安装或放置在可执行文件同目录: {}",
+            rumqttd_bin.display()
+        ))?;
+
+    // 获取 stdout 和 stderr 管道
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
+
+    // 启动日志收集任务
+    if let Some(stdout) = stdout {
+        tokio::spawn(async move {
+            capture_logs(stdout, "INFO").await;
+        });
+    }
+    if let Some(stderr) = stderr {
+        tokio::spawn(async move {
+            capture_logs(stderr, "ERROR").await;
+        });
+    }
+
+    // 等待一小段时间，确保进程启动成功
+    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+
+    // 检查进程是否还在运行
+    match child.try_wait() {
+        Ok(Some(status)) => {
+            // 进程已退出，说明启动失败
+            return Err(anyhow::anyhow!("MQTT 服务器启动失败，退出状态: {}", status));
+        }
+        Ok(None) => {
+            // 进程正在运行，成功
+        }
+        Err(e) => {
+            return Err(anyhow::anyhow!("检查进程状态失败: {}", e));
+        }
+    }
+
+    // 保存进程句柄
+    {
+        let mut process_guard = MQTT_SERVER_PROCESS.write().await;
+        *process_guard = Some(child);
+    }
+
+    // 更新状态
     let mut center = SYNC_CONTROL_CENTER.write().await;
     center.mqtt_server = Some(MqttServerState {
-        is_running: false, // 标记为未真正运行
+        is_running: true,
         port,
         client_count: 0,
         message_count: 0,
         started_at: Some(SystemTime::now()),
     });
 
-    // 返回提示信息
-    Err(anyhow::anyhow!(
-        "内置MQTT服务器尚未实现，请使用外部MQTT服务器或运行独立的 rumqttd"
-    ))
+    log::info!("✅ MQTT 服务器已启动在端口 {}", port);
+    Ok(())
+}
+
+/// 捕获日志输出到缓冲区
+async fn capture_logs<R>(pipe: R, default_level: &str)
+where
+    R: tokio::io::AsyncRead + Unpin,
+{
+    use chrono::Local;
+    use tokio::io::{AsyncBufReadExt, BufReader};
+
+    let reader = BufReader::new(pipe);
+    let mut lines = reader.lines();
+
+    while let Ok(Some(line)) = lines.next_line().await {
+        let now = Local::now().format("%H:%M:%S").to_string();
+
+        // 解析日志级别
+        let level = if line.contains("INFO") {
+            "INFO"
+        } else if line.contains("WARN") {
+            "WARN"
+        } else if line.contains("ERROR") || line.contains("panicked") {
+            "ERROR"
+        } else if line.contains("DEBUG") {
+            "DEBUG"
+        } else {
+            default_level
+        };
+
+        let log_entry = MqttBrokerLog {
+            time: now,
+            level: level.to_string(),
+            message: line,
+        };
+
+        // 添加到缓冲区（保持最多 MAX_LOG_ENTRIES 条）
+        let mut logs = MQTT_BROKER_LOGS.write().await;
+        logs.push(log_entry);
+        if logs.len() > MAX_LOG_ENTRIES {
+            logs.remove(0);
+        }
+    }
+}
+
+/// 获取 MQTT Broker 日志
+pub async fn get_mqtt_broker_logs() -> Vec<MqttBrokerLog> {
+    let logs = MQTT_BROKER_LOGS.read().await;
+    logs.clone()
+}
+
+/// 清空 MQTT Broker 日志
+pub async fn clear_mqtt_broker_logs() {
+    let mut logs = MQTT_BROKER_LOGS.write().await;
+    logs.clear();
+}
+
+/// 检查 MQTT 进程是否真正在运行
+/// 返回 (is_running, pid, exit_status)
+pub async fn check_mqtt_process_status() -> (bool, Option<u32>, Option<String>) {
+    let mut process_guard = MQTT_SERVER_PROCESS.write().await;
+
+    if let Some(ref mut child) = *process_guard {
+        // 尝试检查进程状态
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                // 进程已退出
+                let exit_info = format!("exit code: {:?}", status.code());
+                // 清理已退出的进程
+                *process_guard = None;
+                // 同时更新 SYNC_CONTROL_CENTER 的状态
+                let mut center = SYNC_CONTROL_CENTER.write().await;
+                center.mqtt_server = None;
+                (false, None, Some(exit_info))
+            }
+            Ok(None) => {
+                // 进程仍在运行
+                let pid = child.id();
+                (true, pid, None)
+            }
+            Err(e) => {
+                // 无法检查状态
+                (false, None, Some(format!("check error: {}", e)))
+            }
+        }
+    } else {
+        // 没有进程句柄
+        (false, None, None)
+    }
 }
 
 /// 停止 MQTT 服务器
 pub async fn stop_mqtt_server() -> anyhow::Result<()> {
+    // 获取并终止进程
+    let mut process_guard = MQTT_SERVER_PROCESS.write().await;
+
+    if let Some(mut child) = process_guard.take() {
+        // 尝试优雅地终止进程
+        match child.kill().await {
+            Ok(_) => {
+                log::info!("✅ MQTT 服务器进程已终止");
+            }
+            Err(e) => {
+                log::warn!("⚠️ 终止 MQTT 服务器进程失败: {}", e);
+            }
+        }
+
+        // 等待进程完全退出
+        let _ = child.wait().await;
+    } else {
+        return Err(anyhow::anyhow!("MQTT 服务器未在运行"));
+    }
+
+    // 更新状态
     let mut center = SYNC_CONTROL_CENTER.write().await;
     center.mqtt_server = None;
+
+    // 清空日志缓冲区
+    clear_mqtt_broker_logs().await;
+
+    log::info!("✅ MQTT 服务器已停止");
     Ok(())
 }
 

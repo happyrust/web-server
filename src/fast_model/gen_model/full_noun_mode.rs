@@ -5,7 +5,6 @@ use aios_core::pdms_types::{
     GNERAL_LOOP_OWNER_NOUN_NAMES, GNERAL_PRIM_NOUN_NAMES, USE_CATE_NOUN_NAMES,
 };
 use aios_core::pe::SPdmsElement;
-use aios_core::{DBType, query_mdb_db_nums};
 use dashmap::DashMap;
 use glam::Vec3;
 use std::collections::HashSet;
@@ -20,9 +19,6 @@ use super::context::NounProcessContext;
 use super::errors::{FullNounError, Result};
 use super::loop_processor::process_loop_refno_page;
 use super::prim_processor::process_prim_refno_page;
-use crate::fast_model::refno_errors::{
-    REFNO_ERROR_STORE, RefnoErrorKind, RefnoErrorStage, record_refno_error,
-};
 use crate::fast_model::{cata_model, query_provider};
 // Performance profiling support
 #[cfg(feature = "profile")]
@@ -49,39 +45,6 @@ pub fn validate_sjus_map(
     Ok(())
 }
 
-fn track_refno_issues(refnos: &[RefnoEnum], context: &str, stage: RefnoErrorStage) {
-    let mut seen = HashSet::new();
-    for &refno in refnos {
-        if matches!(refno, RefnoEnum::Refno(r) if r.0 == 0) {
-            record_refno_error(
-                RefnoErrorKind::ZeroOrNegative,
-                stage,
-                "fast_model/gen_model/full_noun_mode.rs",
-                "collect_refnos",
-                format!("{} 返回无效 RefNo=0", context),
-                Some(&refno),
-                None,
-                &[],
-                None,
-            );
-        }
-
-        if !seen.insert(refno) {
-            record_refno_error(
-                RefnoErrorKind::Duplicate,
-                stage,
-                "fast_model/gen_model/full_noun_mode.rs",
-                "collect_refnos",
-                format!("{} 中检测到重复 RefNo", context),
-                Some(&refno),
-                None,
-                &[],
-                None,
-            );
-        }
-    }
-}
-
 /// Full Noun 模式下生成所有几何体（优化版本）
 ///
 /// # 主要改进
@@ -104,25 +67,12 @@ pub async fn gen_full_noun_geos_optimized(
     println!("🚀 启动 Full Noun 模式（入口 Noun 深度查询版本）");
     config.print_info();
 
-    // 🔥 读取数据库过滤配置：优先 manual_db_nums，否则按当前 MDB 的 DB 列表，并应用 exclude_db_nums
-    let mut dbnums: Vec<u32> = if let Some(manual) = db_option.manual_db_nums.clone() {
-        manual
-    } else {
-        // 从 MDB 获取当前项目允许的 DB 列表（DESI）
-        query_mdb_db_nums(None, DBType::DESI).await.map_err(|e| {
-            FullNounError::DatabaseError(format!("query_mdb_db_nums(None, DESI) failed: {}", e))
-        })?
-    };
-
-    // 应用排除列表
-    if let Some(exclude) = &db_option.exclude_db_nums {
-        dbnums.retain(|dbno| !exclude.contains(dbno));
-    }
-
+    // 🔥 读取 manual_db_nums 配置（用于过滤数据库）
+    let dbnums: Vec<u32> = db_option.manual_db_nums.clone().unwrap_or_default();
     if !dbnums.is_empty() {
         println!("🗂️  数据库过滤: 仅查询 dbnum = {:?}", dbnums);
     } else {
-        println!("🗂️  数据库过滤: 查询所有数据库（未设置 manual_db_nums），或过滤后为空");
+        println!("🗂️  数据库过滤: 查询所有数据库（未设置 manual_db_nums）");
     }
 
     let has_explicit_entry_nouns = config.enabled_categories.iter().any(|cat| {
@@ -193,8 +143,6 @@ pub async fn gen_full_noun_geos_optimized(
             }
         }
 
-        track_refno_issues(&refnos, noun_str, RefnoErrorStage::InputParse);
-
         if refnos.is_empty() {
             println!(
                 "[gen_full_noun_geos] 入口 noun {}: 未找到实例，跳过",
@@ -250,11 +198,6 @@ pub async fn gen_full_noun_geos_optimized(
                     e
                 ))
             })?;
-    track_refno_issues(
-        &loop_descendants,
-        "loop_descendants",
-        RefnoErrorStage::Query,
-    );
     loop_refnos.extend(loop_descendants);
 
     let prim_descendants =
@@ -266,11 +209,6 @@ pub async fn gen_full_noun_geos_optimized(
                     e
                 ))
             })?;
-    track_refno_issues(
-        &prim_descendants,
-        "prim_descendants",
-        RefnoErrorStage::Query,
-    );
     prim_refnos.extend(prim_descendants);
 
     let cate_descendants =
@@ -282,11 +220,6 @@ pub async fn gen_full_noun_geos_optimized(
                     e
                 ))
             })?;
-    track_refno_issues(
-        &cate_descendants,
-        "cate_descendants",
-        RefnoErrorStage::Query,
-    );
     cate_refnos.extend(cate_descendants);
 
     println!(
@@ -462,37 +395,13 @@ pub async fn gen_full_noun_geos_optimized(
                 }
             };
 
-            // 3. 先生成 BRAN/HANG 相关的 CATE 几何（不触发 tubing）
-            let cate_outcome = match cata_model::gen_cata_instances(
+            // 3. 调用 cata_model::gen_cata_geos 生成 Tubing 几何体
+            if let Err(e) = cata_model::gen_cata_geos(
                 db_option.clone(),
                 Arc::new(target_bran_reuse_cata_map),
-                loop_sjus_map_arc.clone(),
-                sender.clone(),
-            )
-            .await
-            {
-                Ok(outcome) => Some(outcome),
-                Err(e) => {
-                    println!(
-                        "[gen_full_noun_geos] 批次 {}: BRAN/HANG 关联 CATE 生成失败: {}",
-                        batch_num, e
-                    );
-                    None
-                }
-            };
-
-            // 4. 单独生成 BRAN/HANG tubing
-            let local_al_map = cate_outcome
-                .as_ref()
-                .map(|o| o.local_al_map.clone())
-                .unwrap_or_else(|| Arc::new(DashMap::new()));
-
-            if let Err(e) = cata_model::gen_branch_tubi(
-                db_option.clone(),
                 Arc::new(branch_refnos_map),
                 loop_sjus_map_arc.clone(),
                 sender.clone(),
-                local_al_map,
             )
             .await
             {
@@ -561,17 +470,6 @@ pub async fn gen_full_noun_geos_optimized(
 
     categorized.print_statistics();
 
-    let error_summary = REFNO_ERROR_STORE.summary();
-    if error_summary.total > 0 {
-        println!("📊 RefNo 错误统计: 总计 {}", error_summary.total);
-        for (kind, count) in error_summary.by_kind.iter() {
-            println!("   - {:?}: {}", kind, count);
-        }
-        for (stage, count) in error_summary.by_stage.iter() {
-            println!("   - 阶段 {:?}: {}", stage, count);
-        }
-    }
-
     #[cfg(feature = "profile")]
     info!(
         total_duration_ms = total_duration.as_millis() as u64,
@@ -614,69 +512,15 @@ mod tests {
         }
     }
 
-    // #[test]
-    // fn test_validate_sjus_map_with_data() {
-    //     let sjus_map = DashMap::new();
-    //     sjus_map.insert(RefnoEnum::RefU64(1), (Vec3::ZERO, 1.0));
+    #[test]
+    fn test_validate_sjus_map_with_data() {
+        let sjus_map = DashMap::new();
+        sjus_map.insert(RefnoEnum::RefU64(1), (Vec3::ZERO, 1.0));
 
-    //     let config = FullNounConfig::default().with_strict_validation(true);
+        let config = FullNounConfig::default().with_strict_validation(true);
 
-    //     // 有数据时不应报错
-    //     let result = validate_sjus_map(&sjus_map, &config);
-    //     assert!(result.is_ok());
-    // }
-}
-
-// ============================================================================
-// 兼容层函数（从 legacy.rs 迁移）
-// ============================================================================
-
-use crate::fast_model::pdms_inst::save_instance_data_optimize;
-use crate::options::DbOptionExt;
-use anyhow::Result as AnyhowResult;
-
-/// 兼容函数：旧版的 gen_full_noun_geos
-///
-/// 为了保持向后兼容，保留这个函数签名。
-/// 内部转发到优化版本 gen_full_noun_geos_optimized
-#[deprecated(note = "请使用 gen_full_noun_geos_optimized 替代")]
-pub async fn gen_full_noun_geos(
-    db_option: &DbOptionExt,
-    _extra_nouns: Option<Vec<&'static str>>,
-) -> AnyhowResult<super::models::DbModelInstRefnos> {
-    println!("⚠️ 警告：使用已弃用的 gen_full_noun_geos，内部已转发到优化版本");
-
-    let config = FullNounConfig::from_db_option_ext(db_option)
-        .map_err(|e| anyhow::anyhow!("配置错误: {}", e))?;
-
-    let (sender, receiver) = flume::unbounded();
-    let replace_exist = db_option.inner.is_replace_mesh();
-
-    let insert_handle = tokio::spawn(async move {
-        while let Ok(shape_insts) = receiver.recv_async().await {
-            if let Err(e) = save_instance_data_optimize(&shape_insts, replace_exist).await {
-                eprintln!("保存实例数据失败: {}", e);
-            }
-        }
-    });
-
-    let categorized =
-        gen_full_noun_geos_optimized(Arc::new(db_option.inner.clone()), &config, sender)
-            .await
-            .map_err(|e| anyhow::anyhow!("Full Noun 生成失败: {}", e))?;
-
-    let _ = insert_handle.await;
-
-    let cate = categorized.get_by_category(super::models::NounCategory::Cate);
-    let loops = categorized.get_by_category(super::models::NounCategory::LoopOwner);
-    let prims = categorized.get_by_category(super::models::NounCategory::Prim);
-
-    let result = super::models::DbModelInstRefnos {
-        bran_hanger_refnos: Arc::new(Vec::new()),
-        use_cate_refnos: Arc::new(cate),
-        loop_owner_refnos: Arc::new(loops),
-        prim_refnos: Arc::new(prims),
-    };
-
-    Ok(result)
+        // 有数据时不应报错
+        let result = validate_sjus_map(&sjus_map, &config);
+        assert!(result.is_ok());
+    }
 }

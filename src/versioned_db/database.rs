@@ -499,6 +499,14 @@ DEFINE EVENT OVERWRITE update_dbnum_event ON pe WHEN $event = "CREATE" OR $event
                     max_ref1: $ref_1
                 }
                 WHERE count > 0;
+            } ELSE IF $event = "UPDATE" {
+                -- P0修复: 处理普通的 UPDATE 事件，更新 sesno
+                -- 增量更新时大部分操作是 EleOperation::Modified，会触发 UPDATE 事件
+                -- 如果不处理，dbnum_info_table 的 sesno 不会更新，导致重启后重复增量更新
+                UPSERT type::record('dbnum_info_table', $ref_0) MERGE {
+                    sesno: math::max([sesno?:0, $max_sesno]),
+                    max_ref1: math::max([max_ref1?:0, $ref_1])
+                };
             };
         };
     "#;

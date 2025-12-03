@@ -1,0 +1,224 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  font-family: 'Inter', 'Noto Sans SC', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  margin: 0;
+  padding: 0;
+}
+
+#app {
+  width: 100%;
+  min-height: 100vh;
+}
+
+/* 增强文字对比度 - 仅在亮色模式下生效 */
+[data-theme="light"] .label-text {
+  color: #1e293b; /* slate-800 */
+  font-weight: 600;
+}
+
+[data-theme="light"] .label-text-alt {
+  color: #475569; /* slate-600 */
+  font-weight: 500;
+}
+
+/* 增强按钮对比度 */
+.btn {
+  font-weight: 600;
+  border-width: 2px;
+  /* Ensure buttons have sufficient padding and alignment */
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+}
+
+/* Fix Ghost Buttons */
+[data-theme="light"] .btn-ghost {
+  color: #475569; /* slate-600 */
+  border-color: transparent; /* Ghost buttons typically have no border until hover */
+  background-color: transparent;
+}
+
+[data-theme="light"] .btn-ghost:hover {
+  background-color: #e2e8f0; /* slate-200 */
+  color: #1e293b; /* slate-800 */
+}
+
+/* Fix Primary Buttons */
+[data-theme="light"] .btn-primary {
+  background-color: #3b82f6; /* blue-500 */
+  color: #ffffff;
+  border-color: #3b82f6; /* blue-500 */
+}
+
+[data-theme="light"] .btn-primary:hover {
+  background-color: #2563eb; /* blue-600 */
+  border-color: #2563eb; /* blue-600 */
+}
+
+/* Fix Success Buttons */
+[data-theme="light"] .btn-success {
+  background-color: #10b981; /* green-500 */
+  color: #ffffff;
+  border-color: #10b981; /* green-500 */
+}
+
+[data-theme="light"] .btn-success:hover {
+  background-color: #059669; /* green-600 */
+  border-color: #059669; /* green-600 */
+}
+
+/* Fix Info Buttons */
+[data-theme="light"] .btn-info {
+  background-color: #06b6d4; /* cyan-500 */
+  color: #ffffff;
+  border-color: #06b6d4; /* cyan-500 */
+}
+
+[data-theme="light"] .btn-info:hover {
+  background-color: #0891b2; /* cyan-600 */
+  border-color: #0891b2; /* cyan-600 */
+}
+
+/* Fix Outline Buttons explicitly if used */
+[data-theme="light"] .btn-outline {
+  background-color: transparent;
+  color: currentColor;
+}
+
+[data-theme="light"] .btn-outline.btn-primary {
+  color: #3b82f6;
+  border-color: #3b82f6;
+}
+
+[data-theme="light"] .btn-outline.btn-primary:hover {
+  background-color: #3b82f6;
+  color: #ffffff;
+  border-color: #3b82f6;
+}
+
+/* 增强输入框对比度 */
+[data-theme="light"] .input-bordered {
+  border-width: 2px;
+  border-color: #cbd5e1; /* slate-300 */
+  color: #1e293b; /* slate-800 */
+}
+
+[data-theme="light"] .input-bordered:focus {
+  border-color: #3b82f6; /* blue-500 */
+  outline: 2px solid #93c5fd; /* blue-300 */
+}
+
+[data-theme="light"] .input-bordered::placeholder {
+  color: #94a3b8; /* slate-400 */
+}
+
+/* 增强卡片标题对比度 */
+[data-theme="light"] .card-title {
+  color: #0f172a; /* slate-900 */
+  font-weight: 700;
+}
+
+/* 增强普通文本对比度 - 仅在亮色模式下覆盖 */
+[data-theme="light"] .text-slate-500 {
+  color: #475569; 
+}
+
+[data-theme="light"] .text-slate-600 {
+  color: #334155;
+}
+
+[data-theme="light"] .text-slate-700 {
+  color: #1e293b;
+}
+
+/* 增强表单描述文字 */
+[data-theme="light"] .form-control .label-text-alt {
+  color: #64748b;
+  font-size: 0.875rem;
+}
+
+/* 增强链接可见性 */
+[data-theme="light"] a {
+  color: #2563eb; /* blue-600 */
+  font-weight: 500;
+}
+
+[data-theme="light"] a:hover {
+  color: #1d4ed8; /* blue-700 */
+  text-decoration: underline;
+}
+
+/* 增强标题对比度 */
+[data-theme="light"] h1, 
+[data-theme="light"] h2, 
+[data-theme="light"] h3, 
+[data-theme="light"] h4, 
+[data-theme="light"] h5, 
+[data-theme="light"] h6 {
+  color: #1e293b; /* slate-800 */
+}
+
+[data-theme="light"] h1 {
+  color: #0f172a; /* slate-900 */
+}
+
+/* DaisyUI stat 组件增强 */
+[data-theme="light"] .stat-title {
+  color: #475569;
+  font-weight: 600;
+}
+
+[data-theme="light"] .stat-value {
+  font-weight: 700;
+}
+
+[data-theme="light"] .stat-desc {
+  color: #64748b;
+}
+
+/* DaisyUI badge 增强 */
+.badge {
+  font-weight: 600;
+}
+
+/* 确保表格文字可见 */
+[data-theme="light"] table th {
+  color: #1e293b;
+  font-weight: 700;
+}
+
+[data-theme="light"] table td {
+  color: #334155;
+}
+
+/* 下拉菜单和选择框 */
+[data-theme="light"] .select {
+  color: #1e293b;
+  border-width: 2px;
+  border-color: #cbd5e1;
+}
+
+[data-theme="light"] .select:focus {
+  border-color: #3b82f6;
+}
+
+/* 复选框和单选框标签 */
+[data-theme="light"] .checkbox + span,
+[data-theme="light"] .radio + span {
+  color: #1e293b;
+}
+
+/* 侧边栏分组标题 - 保持深色背景下的浅色文字，这里不需要在亮色模式下变深，因为侧边栏通常是深色的 */
+/* 如果侧边栏在亮色模式下也是深色背景，则不应应用这些 rules */
+/* App.vue 中侧边栏 bg-slate-950 text-slate-100，所以侧边栏内的文字应该是浅色的 */
+/* 原来的 CSS: .text-xs.uppercase { color: #64748b !important; } -> 这会把侧边栏标题变暗！*/
+/* 我们应该排除侧边栏 */
+
+[data-theme="light"] main .text-xs.uppercase {
+  color: #64748b;
+  font-weight: 700;
+}

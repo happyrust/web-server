@@ -1,0 +1,143 @@
+# 站点 7000 测试环境配置（异地协同测试专用）
+# 基本结构基于 config/remote_file_sync_test/DbOption-bj.toml
+
+#同步文件配置
+total_sync = false
+incr_sync =  false
+sync_history = false
+enable_log = false
+sync_graph_db = false
+sync_versioned = false
+sync_tidb = false
+sync_live = true
+replace_dbs = false
+enable_index = false
+sync_chunk_size = 10_0000
+
+#项目设置
+# 使用 AVEVA 项目路径
+project_path = "D:/AVEVA/Projects/E3D2.1"
+included_projects = ["AvevaMarineSample"]
+#project_dirs = ["AvevaMarineSample"]
+
+mdb_name = "ALL"
+project_name = "AvevaMarineSample"
+project_code = '1516'
+surreal_ns = '1516'
+module = "DESI"
+#是否生成模型数据
+gen_model = true
+gen_mesh = true
+replace_mesh = false
+save_db = true
+apply_boolean_operation = true
+mesh_tol_ratio = 3.0
+#是否启用房间计算
+gen_spatial_tree = true
+load_spatial_tree = false
+save_spatial_tree_to_db = false
+gen_model_batch_size = 16
+
+# Full Noun 模式配置
+full_noun_mode = true
+full_noun_max_concurrent_nouns = 6
+full_noun_batch_size = 200
+
+# 启用的 noun 类别/具体 noun 名称
+full_noun_enabled_categories = ["BRAN", "PANE"]
+
+# 排除的 noun 列表
+full_noun_excluded_nouns = []
+
+# 调试模式：限制每种 Noun 类型的处理数量
+debug_limit_per_noun = 10
+
+build_cate_relate = false
+
+meshes_path = "/Volumes/DPC/work/plant-code/rs-plant3-d/assets/meshes"
+
+#生成补充类型的graph，方便查询直接生成语句
+gen_noun_graph = false
+
+#arangodb 配置
+arangodb_database = "ams"
+multi_threads = false
+only_sync_sys = false
+arangodb_url = "http://127.0.0.1:8529"
+rebuild_ssc_tree = false
+arangodb_user = "root"
+arangodb_password = ""
+
+#tidb 配置
+ip = "127.0.0.1"
+user = "root"
+password = ""
+port = "3306"
+sql_threads_number = 10
+batch_insert_sql_cnt = 100 #mysql 批量插入的数量
+
+
+#版本数据库服务配置（站点 7000 使用端口 8022）
+v_ip = "localhost"
+v_port = 8022
+v_user = "root"
+v_password = "root"
+pe_chunk = 300
+att_chunk = 200
+
+kv_ip = "localhost"
+kv_port = 8012
+
+#mqtt 事件 ip（测试环境使用本机 + 内置 MQTT 服务器）
+mqtt_host = "127.0.0.1"
+mqtt_port = 1883
+
+# 区域标识与本地区负责的 dbnums
+location = "SITE7000"
+location_dbs = [7000]
+
+#服务器启动配置
+server_release_ip = "127.0.0.1:9099"
+
+# hash文件的站点
+remote_file_server_hosts = []
+# 站点 7000 文件服务器入口
+file_server_host = "http://127.0.0.1:8082/assets/archives"
+
+# 异地协同 SQLite 数据库路径（相对于此配置文件）
+deployment_sites_sqlite_path = "deployment_sites.sqlite"
+
+surreal_script_dir = "../rs-core/resource/surreal"
+
+
+#调试选项
+save_model_mesh_to_graph_db = true
+need_sync_refno_basic = false       #是否重新生成 refno_basic 缓存
+reset_mdb_project = false           #是否重新生成 mdb 缓存
+only_update_dbinfo = false
+debug_print_world_transform = false
+only_rebuild_pdms_element = false
+
+debug_refno_types = ["CATA", "LOOP", "PRIM"]
+# manual_db_nums = [7000]  # Full Noun 模式下此配置会被忽略
+exclude_db_nums = [] #不参与生成模型的数据库编号
+plat_url = ""
+
+#puhua
+puhua_database_ip = ""
+puhua_database_user = ""
+puhua_database_password = ""
+
+
+# room_keyword = "-RM" # 2016  K-R-K100   (-R-)
+room_keyword = "-R-" # 2016  K-R-K100   (-R-)
+
+gen_history_model = false
+
+
+
+
+
+
+
+

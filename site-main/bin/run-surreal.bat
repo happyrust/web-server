@@ -1,0 +1,1 @@
+surreal start   --bind 0.0.0.0:8031  -u root -p root rocksdb://ams-8031.db
