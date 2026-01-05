@@ -35,7 +35,7 @@ async fn main() -> anyhow::Result<()> {
         .parse::<u16>()
         .unwrap_or(8080);
 
-    println!("🚀 正在启动 AIOS Web UI 服务器...");
+    println!("🚀 正在启动 AIOS Web UI 服务器... [DEBUG_VER_1]");
     println!("📱 访问地址: http://localhost:{}", port);
     println!("⚙️  使用配置文件: {}.toml", config_path);
     println!("💡 数据库服务由配置管理，根据需要启动");

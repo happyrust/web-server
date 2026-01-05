@@ -158,10 +158,12 @@ pub async fn gen_loop_geos(
                 let mut geo_hash = 0;
                 let mut item_trans = Transform::IDENTITY;
                 let mut geo_param = PdmsGeoParam::Unknown;
-                let Ok((verts, height)) = aios_core::fetch_loops_and_height(target_refno).await
+                let Ok(loop_result) = aios_core::fetch_loops_and_height(target_refno).await
                 else {
                     continue;
                 };
+                let verts = loop_result.loops;
+                let height = loop_result.height;
                 // dbg!((&verts, height));
                 match target_type {
                     "NREV" | "REVO" => {

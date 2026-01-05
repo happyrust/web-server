@@ -339,8 +339,61 @@ pub async fn get_task_status(
     State(state): State<RoomApiState>,
     Path(task_id): Path<String>,
 ) -> Result<Json<RoomComputeTask>, StatusCode> {
-    let task_manager = state.task_manager.read().await;
+    // 首先从 RoomWorker 获取真实的任务状态
+    if let Some(worker_status) = state.room_worker.get_task_status(&task_id) {
+        // 从 task_manager 获取任务基础信息
+        let task_manager = state.task_manager.read().await;
+        if let Some(mut task) = task_manager.active_tasks.get(&task_id).cloned() {
+            // 用 Worker 的真实状态更新任务
+            match worker_status {
+                RoomWorkerTaskStatus::Queued => {
+                    task.status = TaskStatus::Pending;
+                    task.message = "任务在队列中等待执行".to_string();
+                }
+                RoomWorkerTaskStatus::Running { progress, stage } => {
+                    task.status = TaskStatus::Running;
+                    task.progress = progress * 100.0; // 转换为百分比
+                    task.message = format!("执行中: {}", stage);
+                }
+                RoomWorkerTaskStatus::Completed { stats } => {
+                    task.status = TaskStatus::Completed;
+                    task.progress = 100.0;
+                    task.message = format!(
+                        "完成: 处理 {} 房间, {} 面板, {} 构件",
+                        stats.total_rooms, stats.total_panels, stats.total_components
+                    );
+                    task.result = Some(RoomComputeResult {
+                        success: true,
+                        processed_count: stats.total_rooms,
+                        error_count: 0,
+                        warnings: vec![],
+                        errors: vec![],
+                        statistics: RoomStatistics {
+                            total_rooms: stats.total_rooms,
+                            total_panels: stats.total_panels,
+                            total_relations: stats.total_components,
+                            room_types: HashMap::new(),
+                            avg_confidence: stats.cache_hit_rate as f64,
+                        },
+                        duration_ms: stats.build_time_ms,
+                    });
+                }
+                RoomWorkerTaskStatus::Failed { error } => {
+                    task.status = TaskStatus::Failed;
+                    task.message = format!("失败: {}", error);
+                }
+                RoomWorkerTaskStatus::Cancelled => {
+                    task.status = TaskStatus::Cancelled;
+                    task.message = "任务已取消".to_string();
+                }
+            }
+            task.updated_at = chrono::Utc::now();
+            return Ok(Json(task));
+        }
+    }
 
+    // 回退：从 task_manager 读取
+    let task_manager = state.task_manager.read().await;
     if let Some(task) = task_manager.active_tasks.get(&task_id) {
         Ok(Json(task.clone()))
     } else {

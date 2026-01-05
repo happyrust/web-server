@@ -54,14 +54,14 @@ impl ParquetManager {
         }
     }
 
-    /// 获取 Parquet 文件的基础路径： output/database_models
+    /// 获取 Parquet 文件的基础路径
     fn get_base_dir(&self) -> PathBuf {
-        self.base_dir.join("database_models")
+        self.base_dir.clone()
     }
 
     /// 获取 dbno 目录路径
     fn get_dbno_dir(&self, dbno: u32) -> PathBuf {
-        self.get_base_dir().join(dbno.to_string())
+        self.base_dir.join("database_models").join(dbno.to_string())
     }
 
     /// 获取 Instances 主文件路径
@@ -93,15 +93,22 @@ impl ParquetManager {
     /// prefix_type: "instances" 或 "transforms"
     pub fn list_files(&self, dbno: u32, prefix_type: &str) -> Result<Vec<PathBuf>> {
         let dbno_dir = self.get_dbno_dir(dbno);
+        
         if !dbno_dir.exists() {
             return Ok(Vec::new());
         }
 
         let mut files = Vec::new();
-        let main_file = dbno_dir.join(format!("{}.parquet", prefix_type));
-        let prefix = format!("{}_", prefix_type);
+        // 识别基础类型：instance 或 transform
+        let base_type = if prefix_type.starts_with("inst") {
+            "instance"
+        } else if prefix_type.starts_with("trans") {
+            "transform"
+        } else {
+            prefix_type
+        };
 
-        for entry in std::fs::read_dir(dbno_dir)? {
+        for entry in std::fs::read_dir(&dbno_dir)? {
             let entry = entry?;
             let path = entry.path();
             
@@ -112,12 +119,13 @@ impl ParquetManager {
 
             // 检查文件名
             if let Some(filename) = path.file_name().and_then(|s| s.to_str()) {
-                if path == main_file {
-                    files.push(path);
-                    continue;
-                }
+                let is_main = filename == format!("{}.parquet", base_type) || 
+                             filename == format!("{}s.parquet", base_type);
                 
-                if filename.starts_with(&prefix) {
+                let is_incremental = filename.starts_with(&format!("{}_", base_type)) || 
+                                    filename.starts_with(&format!("{}s_", base_type));
+
+                if is_main || is_incremental {
                     files.push(path);
                 }
             }

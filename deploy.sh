@@ -27,9 +27,29 @@ build_web_server() {
         exit 1
     fi
     
-    cargo build --release --bin web_server --no-default-features --features ws,sqlite-index,surreal-save,web_server
+    cargo build --release --bin web_server --no-default-features --features ws,surreal-save,web_server,duckdb-feature,gen_model
     
     echo -e "${GREEN}✅ Web-server build completed${NC}"
+}
+
+# Function to build web-server with zig for linux
+build_zig_linux() {
+    echo -e "${YELLOW}Building web-server for Linux using zig...${NC}"
+    
+    if ! command_exists cargo-zigbuild; then
+        echo -e "${RED}Error: cargo-zigbuild is not installed. Run: cargo install cargo-zigbuild${NC}"
+        exit 1
+    fi
+    
+    if ! command_exists zig; then
+        echo -e "${RED}Error: zig is not installed. Run: brew install zig${NC}"
+        exit 1
+    fi
+
+    # Using glibc 2.31 for compatibility with Ubuntu 20.04+
+    cargo zigbuild --target x86_64-unknown-linux-gnu.2.31 --release --bin web_server --no-default-features --features ws,surreal-save,web_server,duckdb-feature,gen_model
+    
+    echo -e "${GREEN}✅ Web-server linux build completed${NC}"
 }
 
 # Function to build aios-database library
@@ -41,7 +61,7 @@ build_aios_database() {
         exit 1
     fi
     
-    cargo build --release --lib --no-default-features --features ws,sqlite-index,surreal-save,web_server
+    cargo build --release --lib --no-default-features --features ws,surreal-save,web_server,duckdb-feature,gen_model
     
     echo -e "${GREEN}✅ Aios-database library build completed${NC}"
 }
@@ -134,6 +154,10 @@ case "${1:-all}" in
     "docker")
         build_docker
         ;;
+    "zig-linux")
+        build_zig_linux
+        create_package "web-server"
+        ;;
     "all")
         build_web_server
         build_aios_database
@@ -153,6 +177,7 @@ case "${1:-all}" in
         echo "  web-server   - Build and package web-server only"
         echo "  aios-database - Build and package aios-database library only"
         echo "  docker       - Build Docker image"
+        echo "  zig-linux    - Build for Linux using zig (requires cargo-zigbuild)"
         echo "  all          - Build everything (default)"
         echo "  cleanup      - Clean build artifacts and deployments"
         exit 1

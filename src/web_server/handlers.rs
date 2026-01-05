@@ -7960,14 +7960,27 @@ pub async fn api_list_parquet_files(
 ) -> Result<Json<Vec<String>>, (StatusCode, String)> {
     use crate::fast_model::export_model::parquet_writer::ParquetManager;
 
+    println!("DEBUG: api_list_parquet_files START, dbno={}", dbno);
+    
+    // 手动验证目录是否存在
+    let check_path = format!("assets/database_models/{}", dbno);
+    let exists = std::path::Path::new(&check_path).exists();
+    println!("DEBUG: manual check path={} exists={}", check_path, exists);
+
     let manager = ParquetManager::new("assets");
     
     match manager.list_parquet_files(dbno, query.file_type.as_deref()) {
-        Ok(files) => Ok(Json(files)),
-        Err(e) => Err((
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("获取文件列表失败: {}", e),
-        )),
+        Ok(files) => {
+            println!("DEBUG: api_list_parquet_files END, count={}", files.len());
+            Ok(Json(files))
+        },
+        Err(e) => {
+            println!("DEBUG: api_list_parquet_files ERR: {}", e);
+            Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("获取文件列表失败: {}", e),
+            ))
+        },
     }
 }
 

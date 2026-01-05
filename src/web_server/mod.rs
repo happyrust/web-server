@@ -50,6 +50,7 @@ use crate::web_api::{
     create_noun_hierarchy_routes, create_room_tree_routes, create_spatial_query_routes,
     create_pdms_attr_routes, create_ptset_routes, CollisionApiState, create_collision_routes,
     create_review_integration_routes, create_model_center_routes, create_pipeline_annotation_routes,
+    create_jwt_auth_routes,
 };
 use handlers::*;
 use models::*;
@@ -815,6 +816,7 @@ pub async fn start_web_server_with_config(
         .merge(collision_routes)
         .merge(create_review_integration_routes()) // Register new routes
         .merge(create_model_center_routes())
+        .merge(create_jwt_auth_routes()) // JWT Token 获取和验证接口
         .nest("/api/pipeline", create_pipeline_annotation_routes())
         .layer(
             CorsLayer::new()
@@ -830,7 +832,7 @@ pub async fn start_web_server_with_config(
         );
 
     let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{}", port)).await?;
-    println!("🚀 Web UI服务器启动成功！");
+    println!("🚀 Web UI服务器启动成功！ [BANNER_FIX_CHECK]");
     println!("📱 访问地址: http://localhost:{}", port);
     println!("🎯 功能包括:");
     println!("   - 数据库生成任务管理");

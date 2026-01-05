@@ -58,7 +58,7 @@ debug_limit_per_noun = 10
 
 build_cate_relate = false
 
-meshes_path = "./assets/meshes"
+# meshes_path = "./assets/meshes"
 
 #生成补充类型的graph，方便查询直接生成语句
 gen_noun_graph = false
