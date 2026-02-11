@@ -45,12 +45,12 @@ jobs:
 
       - name: Build web_server (Release)
         run: |
-          cargo build --release --bin web_server --target x86_64-pc-windows-msvc --no-default-features --features ws,sqlite-index,surreal-save,web_server
+          cargo build --release --bin web_server --target x86_64-pc-windows-msvc --no-default-features --features ws,sqlite-index,surreal-save,web_server,gen_model
         shell: pwsh
       
       - name: Build aios-database library (Release)
         run: |
-          cargo build --release --lib --target x86_64-pc-windows-msvc --no-default-features --features ws,sqlite-index,surreal-save,web_server
+          cargo build --release --lib --target x86_64-pc-windows-msvc --no-default-features --features ws,sqlite-index,surreal-save,web_server,gen_model
         shell: pwsh
       
       - name: Package binaries

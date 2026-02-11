@@ -47,12 +47,12 @@ jobs:
       - name: Build web_server (Release)
         run: |
           cargo build --release --bin web_server --target x86_64-unknown-linux-gnu \
-            --no-default-features --features ws,sqlite-index,surreal-save,web_server
+            --no-default-features --features ws,sqlite-index,surreal-save,web_server,gen_model
 
       - name: Build aios-database library (Release)
         run: |
           cargo build --release --lib --target x86_64-unknown-linux-gnu \
-            --no-default-features --features ws,sqlite-index,surreal-save,web_server
+            --no-default-features --features ws,sqlite-index,surreal-save,web_server,gen_model
 
       - name: Package binaries
         run: |
