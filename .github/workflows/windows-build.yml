@@ -37,7 +37,12 @@ jobs:
       
       - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v2
-      
+
+      - name: Install Protoc
+        uses: arduino/setup-protoc@v3
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Build web_server (Release)
         run: |
           cargo build --release --bin web_server --target x86_64-pc-windows-msvc --no-default-features --features ws,sqlite-index,surreal-save,web_server

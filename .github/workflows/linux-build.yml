@@ -30,7 +30,8 @@ jobs:
             libssl-dev \
             build-essential \
             cmake \
-            g++
+            g++ \
+            protobuf-compiler
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@master
