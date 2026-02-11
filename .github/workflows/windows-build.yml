@@ -55,11 +55,11 @@ jobs:
       
       - name: Package binaries
         run: |
-          mkdir -p release-package
-          cp target/x86_64-pc-windows-msvc/release/web_server.exe release-package/
-          cp target/x86_64-pc-windows-msvc/release/aios_database.dll release-package/ || echo "DLL not found"
-          cp DbOption*.toml release-package/ || echo "No config files"
-          
+          New-Item -ItemType Directory -Force -Path release-package | Out-Null
+          Copy-Item target/x86_64-pc-windows-msvc/release/web_server.exe release-package/
+          Copy-Item target/x86_64-pc-windows-msvc/release/aios_database.dll release-package/ -ErrorAction SilentlyContinue
+          Copy-Item DbOption*.toml release-package/ -ErrorAction SilentlyContinue
+
           # 创建版本信息文件
           echo "Build Date: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')" > release-package/BUILD_INFO.txt
           echo "Commit: ${{ github.sha }}" >> release-package/BUILD_INFO.txt
