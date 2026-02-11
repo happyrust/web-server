@@ -305,6 +305,7 @@ dependencies = [
 [[package]]
 name = "aios_core"
 version = "0.2.3"
+source = "git+https://github.com/happyrust/rs-core?branch=dev-3.1#3752b498e64b74ce7b69f8b5ed9d7bf8323a747b"
 dependencies = [
  "anyhow",
  "approx",
@@ -336,7 +337,7 @@ dependencies = [
  "hash32 1.0.0",
  "hexasphere",
  "i_triangle",
- "id_tree 1.8.0 (git+https://gitee.com/happydpc/id_tree)",
+ "id_tree 1.8.0 (git+https://github.com/happyrust/id_tree)",
  "indexmap 2.13.0",
  "indextree",
  "itertools 0.14.0",
@@ -363,7 +364,7 @@ dependencies = [
  "pretty-hex",
  "regex",
  "rkyv 0.8.14",
- "rstar 0.11.0 (git+https://gitee.com/happydpc/rstar)",
+ "rstar 0.11.0 (git+https://github.com/happyrust/rstar)",
  "serde",
  "serde_derive",
  "serde_json",
@@ -2348,7 +2349,7 @@ checksum = "ade8366b8bd5ba243f0a58f036cc0ca8a2f069cff1a2351ef1cac6b083e16fc0"
 [[package]]
 name = "calamine"
 version = "0.26.1"
-source = "git+https://gitee.com/happydpc/calamine#f35ae176fa9f763851b236f7166e38a884efc8d6"
+source = "git+https://github.com/happyrust/calamine#f35ae176fa9f763851b236f7166e38a884efc8d6"
 dependencies = [
  "atoi_simd",
  "byteorder",
@@ -2447,7 +2448,7 @@ dependencies = [
 [[package]]
 name = "cavalier_contours"
 version = "0.4.0"
-source = "git+https://gitee.com/happydpc/cavalier_contours#d2d0db137836b672bf7493c047425a146aeb9266"
+source = "git+https://github.com/happyrust/cavalier_contours#d2d0db137836b672bf7493c047425a146aeb9266"
 dependencies = [
  "num-traits",
  "serde",
@@ -3834,7 +3835,7 @@ checksum = "117240f60069e65410b3ae1bb213295bd828f707b5bec6596a1afc8793ce0cbc"
 [[package]]
 name = "dpcsync"
 version = "0.1.0"
-source = "git+https://gitee.com/happydpc/dpc-sync.git#1432df6b714b6ff1c4c51224cb5fc8d6ce3c8f5b"
+source = "git+https://github.com/happyrust/dpc-sync#1432df6b714b6ff1c4c51224cb5fc8d6ce3c8f5b"
 dependencies = [
  "async-trait",
  "blake2",
@@ -5039,6 +5040,7 @@ version = "0.28.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f811f663912a69249fa620dcd2a005db7254529da2d8a0b23942e81f47084501"
 dependencies = [
+ "earcutr",
  "float_next_after",
  "geo-types",
  "geographiclib-rs",
@@ -5047,6 +5049,7 @@ dependencies = [
  "robust",
  "rstar 0.12.2",
  "serde",
+ "spade",
 ]
 
 [[package]]
@@ -5065,26 +5068,6 @@ dependencies = [
  "robust",
  "rstar 0.12.2",
  "serde",
- "spade",
-]
-
-[[package]]
-name = "geo"
-version = "0.32.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3f3901269ec6d4f6068d3f09e5f02f995bd076398dcd1dfec407cd230b02d11b"
-dependencies = [
- "earcutr",
- "float_next_after",
- "geo-types",
- "geographiclib-rs",
- "i_overlay",
- "log",
- "num-traits",
- "rand 0.8.5",
- "robust",
- "rstar 0.12.2",
- "sif-itree",
  "spade",
 ]
 
@@ -6484,7 +6467,7 @@ dependencies = [
 [[package]]
 name = "id_tree"
 version = "1.8.0"
-source = "git+https://gitee.com/happydpc/id_tree#483f2ec03fc107b9195a8c2be6dec5532891b507"
+source = "git+https://github.com/happyrust/id_tree#483f2ec03fc107b9195a8c2be6dec5532891b507"
 dependencies = [
  "serde",
  "serde_derive",
@@ -6621,6 +6604,7 @@ dependencies = [
 [[package]]
 name = "indextree"
 version = "4.7.4"
+source = "git+https://github.com/happyrust/indextree?branch=main#2416dca00df8f928a6fee492702cb5224482a4ba"
 dependencies = [
  "indextree-macros",
  "rkyv 0.8.14",
@@ -6629,6 +6613,7 @@ dependencies = [
 [[package]]
 name = "indextree-macros"
 version = "0.1.3"
+source = "git+https://github.com/happyrust/indextree?branch=main#2416dca00df8f928a6fee492702cb5224482a4ba"
 dependencies = [
  "either",
  "itertools 0.14.0",
@@ -7452,6 +7437,7 @@ dependencies = [
 [[package]]
 name = "manifold-rs"
 version = "0.6.1"
+source = "git+https://github.com/happyrust/manifold-rs?branch=master#703aef3852bef531a203abab5ad8699bc5ea9a93"
 dependencies = [
  "cmake",
  "cxx",
@@ -8972,6 +8958,7 @@ dependencies = [
 [[package]]
 name = "parse_pdms_db"
 version = "3.0.0"
+source = "git+https://github.com/happyrust/pdms-io?branch=dev-3.1#11b1fb4fdc28083e707424da157d5b9bc297c5d6"
 dependencies = [
  "aios_core",
  "anyhow",
@@ -9008,7 +8995,7 @@ dependencies = [
  "serde_json",
  "smol_str 0.3.5",
  "tempfile",
- "thiserror 2.0.18",
+ "thiserror 1.0.69",
  "tokio",
 ]
 
@@ -9081,6 +9068,7 @@ dependencies = [
 [[package]]
 name = "pdms_io"
 version = "0.1.0"
+source = "git+https://github.com/happyrust/pdms-io?branch=dev-3.1#11b1fb4fdc28083e707424da157d5b9bc297c5d6"
 dependencies = [
  "aios_core",
  "anyhow",
@@ -9344,7 +9332,7 @@ dependencies = [
 [[package]]
 name = "ploop-rs"
 version = "0.1.0"
-source = "git+https://gitee.com/happydpc/rust-ploop-processor.git?branch=1.0#33985df43dc86b7716b07942be86d65f17bcfa34"
+source = "git+https://github.com/happyrust/rust-ploop-processor?branch=1.0#33985df43dc86b7716b07942be86d65f17bcfa34"
 dependencies = [
  "anyhow",
  "glam 0.30.10",
@@ -11180,7 +11168,7 @@ dependencies = [
 [[package]]
 name = "rstar"
 version = "0.11.0"
-source = "git+https://gitee.com/happydpc/rstar#13be3c257c5f66eaf67753adbbd76209a6927a92"
+source = "git+https://github.com/happyrust/rstar#13be3c257c5f66eaf67753adbbd76209a6927a92"
 dependencies = [
  "heapless 0.8.0",
  "num-traits",
@@ -12015,12 +12003,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0fda2ff0d084019ba4d7c6f371c95d8fd75ce3524c3cb8fb653a3023f6323e64"
 
 [[package]]
-name = "sif-itree"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "142099cd6db3c4fab61e5133c62ff80b26674391e195860791fda0b1be3e5080"
-
-[[package]]
 name = "signal-hook-registry"
 version = "1.4.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -12564,7 +12546,7 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 [[package]]
 name = "surrealdb"
 version = "3.0.0-beta"
-source = "git+https://gitee.com/happydpc/surrealdb?branch=updated#7dd58dd3866fce4e3b919aca27794e0912625a0e"
+source = "git+https://github.com/happyrust/surrealdb?branch=updated#7dd58dd3866fce4e3b919aca27794e0912625a0e"
 dependencies = [
  "async-channel 2.5.0",
  "boxcar",
@@ -12598,7 +12580,7 @@ dependencies = [
 [[package]]
 name = "surrealdb-core"
 version = "3.0.0-beta"
-source = "git+https://gitee.com/happydpc/surrealdb?branch=updated#7dd58dd3866fce4e3b919aca27794e0912625a0e"
+source = "git+https://github.com/happyrust/surrealdb?branch=updated#7dd58dd3866fce4e3b919aca27794e0912625a0e"
 dependencies = [
  "addr",
  "affinitypool",
@@ -12689,7 +12671,7 @@ dependencies = [
 [[package]]
 name = "surrealdb-protocol"
 version = "0.7.0"
-source = "git+https://gitee.com/happydpc/surrealdb?branch=updated#7dd58dd3866fce4e3b919aca27794e0912625a0e"
+source = "git+https://github.com/happyrust/surrealdb?branch=updated#7dd58dd3866fce4e3b919aca27794e0912625a0e"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -12697,7 +12679,7 @@ dependencies = [
  "chrono",
  "flatbuffers",
  "futures",
- "geo 0.32.0",
+ "geo 0.28.0",
  "http-body-util",
  "prost 0.14.3",
  "prost-types 0.14.3",
@@ -12713,7 +12695,7 @@ dependencies = [
 [[package]]
 name = "surrealdb-types"
 version = "3.0.0-beta"
-source = "git+https://gitee.com/happydpc/surrealdb?branch=updated#7dd58dd3866fce4e3b919aca27794e0912625a0e"
+source = "git+https://github.com/happyrust/surrealdb?branch=updated#7dd58dd3866fce4e3b919aca27794e0912625a0e"
 dependencies = [
  "anyhow",
  "bytes",
@@ -12738,7 +12720,7 @@ dependencies = [
 [[package]]
 name = "surrealdb-types-derive"
 version = "3.0.0-beta"
-source = "git+https://gitee.com/happydpc/surrealdb?branch=updated#7dd58dd3866fce4e3b919aca27794e0912625a0e"
+source = "git+https://github.com/happyrust/surrealdb?branch=updated#7dd58dd3866fce4e3b919aca27794e0912625a0e"
 dependencies = [
  "proc-macro2",
  "quote",

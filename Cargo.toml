@@ -74,14 +74,13 @@ parry3d = { version = "0.25.0", features = ["serde-serialize"] }
 parry2d = { version = "0.25.0", features = ["serde-serialize"] }
 # parse_pdms_db = { git = "https://github.com/happyrust/aios-parse-pdms" }
 # 统一使用 `pdms-io-fork` 内置版本，避免多份 crate 漂移。
-parse_pdms_db = { path = "../pdms-io-fork/crates/parse_pdms_db" }
-# 使用本地 rs-core，便于联调与修复（例如 to_pe_key 的 SurrealQL record id 拼接问题）。
-aios_core = { path = "../rs-core" }
-surrealdb = { git = "https://gitee.com/happydpc/surrealdb", branch = "updated", default-features = false, features = [
+parse_pdms_db = { git = "https://github.com/happyrust/pdms-io", branch = "dev-3.1" }
+aios_core = { git = "https://github.com/happyrust/rs-core", branch = "dev-3.1" }
+surrealdb = { git = "https://github.com/happyrust/surrealdb", branch = "updated", default-features = false, features = [
     "protocol-ws",
     "kv-mem",
 ] }
-surrealdb-types = { git = "https://gitee.com/happydpc/surrealdb", branch = "updated" }
+surrealdb-types = { git = "https://github.com/happyrust/surrealdb", branch = "updated" }
 
 
 bevy_transform = { git = "https://github.com/happyrust/bevy", package = "bevy_transform", features = [
@@ -89,8 +88,8 @@ bevy_transform = { git = "https://github.com/happyrust/bevy", package = "bevy_tr
 ] }
 bevy_reflect = { git = "https://github.com/happyrust/bevy", package = "bevy_reflect" }
 # pdms_io = { git = "https://github.com/happyrust/pdms-io.git" }
-pdms_io = { path = "../pdms-io-fork" }
-dpcsync = { git = "https://gitee.com/happydpc/dpc-sync.git" }
+pdms_io = { git = "https://github.com/happyrust/pdms-io", branch = "dev-3.1" }
+dpcsync = { git = "https://github.com/happyrust/dpc-sync" }
 # gen-xkt = { path = "../gen-xkt" }
 
 # 通用依赖
@@ -110,14 +109,14 @@ tokio = { version = "1.47.1", features = ["full"] }
 serde = { version = "1.0.137", features = ["derive"] }
 sha2 = "0.10"
 id_tree = { version = "1.8.0", features = ["serde_support"] }
-indextree = { path = "../indextree/indextree", features = ["rkyv"] }
+indextree = { git = "https://github.com/happyrust/indextree", branch = "main", features = ["rkyv"] }
 glam = { version = "0.30.8", features = ["serde", "rkyv"] }
 glamx = { version = "0.1.3", features = ["approx", "rand"], optional = true }
 cached = "0.56.0"
 rkyv = { version = "0.8.12", features = ["hashbrown-0_15"] }
 rfd = { version = "0.15.4", features = ["async-std"], optional = true }
 meilisearch-sdk = "0.26.1"
-cavalier_contours = { git = "https://gitee.com/happydpc/cavalier_contours", features = [
+cavalier_contours = { git = "https://github.com/happyrust/cavalier_contours", features = [
     "serde",
 ] }
 # redb = "3.0.1" # Removed - using SQLite for all storage

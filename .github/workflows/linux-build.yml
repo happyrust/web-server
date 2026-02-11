@@ -1,0 +1,143 @@
+name: Linux x64 Build (Ubuntu 22.04)
+
+on:
+  push:
+    branches: [ "github-ci" ]
+    tags: [ "v*.*.*" ]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-linux-x64:
+    name: Build Linux x64 Release
+    runs-on: ubuntu-22.04
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure git for private repos
+        run: |
+          git config --global url."https://${{ secrets.GH_PAT }}@github.com/".insteadOf "https://github.com/"
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            pkg-config \
+            libssl-dev \
+            build-essential \
+            cmake \
+            g++
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2025-11-07
+          targets: x86_64-unknown-linux-gnu
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: "linux-release-v1"
+
+      - name: Build web_server (Release)
+        run: |
+          cargo build --release --bin web_server --target x86_64-unknown-linux-gnu \
+            --no-default-features --features ws,sqlite-index,surreal-save,web_server
+
+      - name: Build aios-database library (Release)
+        run: |
+          cargo build --release --lib --target x86_64-unknown-linux-gnu \
+            --no-default-features --features ws,sqlite-index,surreal-save,web_server
+
+      - name: Package binaries
+        run: |
+          mkdir -p release-package
+          cp target/x86_64-unknown-linux-gnu/release/web_server release-package/
+          cp target/x86_64-unknown-linux-gnu/release/libaios_database.so release-package/ || echo "SO not found"
+          cp DbOption*.toml release-package/ || echo "No config files"
+
+          echo "Build Date: $(date '+%Y-%m-%d %H:%M:%S')" > release-package/BUILD_INFO.txt
+          echo "Commit: ${{ github.sha }}" >> release-package/BUILD_INFO.txt
+          echo "Branch: ${{ github.ref_name }}" >> release-package/BUILD_INFO.txt
+          echo "Target: x86_64-unknown-linux-gnu" >> release-package/BUILD_INFO.txt
+          echo "OS: Ubuntu 22.04" >> release-package/BUILD_INFO.txt
+
+      - name: Create tar.gz archive
+        run: |
+          tar -czf aios-database-linux-x64.tar.gz -C release-package .
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-x64-release
+          path: |
+            aios-database-linux-x64.tar.gz
+            release-package/web_server
+          retention-days: 30
+
+      - name: Create Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            aios-database-linux-x64.tar.gz
+          body: |
+            ## Linux x64 Release (Ubuntu 22.04)
+
+            自动构建的 Linux x64 二进制文件（基于 Ubuntu 22.04）
+
+            ### 包含文件
+            - `web_server` - Web 服务器主程序
+            - `libaios_database.so` - 核心库（如果可用）
+            - 配置文件示例
+
+            ### 使用方法
+            1. 解压: `tar -xzf aios-database-linux-x64.tar.gz`
+            2. 配置 `DbOption.toml`
+            3. 运行 `./web_server`
+
+            ### 系统要求
+            - Ubuntu 22.04+ 或兼容的 Linux 发行版
+            - glibc 2.35+
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  test-linux-binary:
+    name: Test Linux Binary
+    needs: build-linux-x64
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: linux-x64-release
+
+      - name: Verify binary
+        run: |
+          if [ -f "web_server" ]; then
+            echo "✓ web_server found"
+            ls -lh web_server
+            file web_server
+          elif [ -f "release-package/web_server" ]; then
+            echo "✓ web_server found in release-package/"
+            ls -lh release-package/web_server
+            file release-package/web_server
+          else
+            echo "✗ web_server not found!"
+            find . -name "web_server" -type f
+            exit 1
+          fi
+
+      - name: Check binary dependencies
+        run: |
+          binary="web_server"
+          [ -f "release-package/web_server" ] && binary="release-package/web_server"
+          chmod +x "$binary"
+          ldd "$binary" || true
+        continue-on-error: true

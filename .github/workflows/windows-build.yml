@@ -2,7 +2,7 @@ name: Windows x64 Build
 
 on:
   push:
-    branches: [ "master", "only-csg" ]
+    branches: [ "github-ci" ]
     tags: [ "v*.*.*" ]
   workflow_dispatch:
 
@@ -23,9 +23,10 @@ jobs:
           git config --global fetch.depth 0
         shell: pwsh
       
-      - name: Install Rust nightly
-        uses: dtolnay/rust-toolchain@nightly
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: nightly-2025-11-07
           targets: x86_64-pc-windows-msvc
       
       - name: Rust Cache
