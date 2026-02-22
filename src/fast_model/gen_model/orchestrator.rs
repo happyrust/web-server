@@ -929,7 +929,7 @@ async fn process_full_noun_mode(
             if use_surrealdb {
                 let t0 = Instant::now();
                 let batch_id = batch_cnt;
-                let shape_insts_for_db = shape_insts;
+                let shape_insts_for_db = shape_insts_arc.clone();
                 let mut save_task = tokio::spawn(async move {
                     save_instance_data_optimize(&shape_insts_for_db, replace_exist).await
                 });
@@ -1769,12 +1769,11 @@ async fn process_targeted_generation(
             }
 
         }
-        Ok(())
-
         // 等待所有的 db 写入句柄完成
         for h in db_write_handles {
             let _ = h.await;
         }
+        Ok(())
     });
 
 
@@ -3077,4 +3076,3 @@ fn initialize_spatial_index() {
     // No-op when feature is disabled
 
 }
-

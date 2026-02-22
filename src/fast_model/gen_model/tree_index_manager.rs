@@ -23,7 +23,7 @@ use aios_core::pe::SPdmsElement;
 use aios_core::{RefnoEnum, RefU64};
 use dashmap::DashMap;
 use once_cell::sync::Lazy;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -515,7 +515,7 @@ impl TreeIndexManager {
         max_depth: Option<usize>,
     ) -> Vec<RefnoEnum> {
         let refno = root.refno();
-        let noun_hashes: Vec<u32> = nouns.iter().map(|n| db1_hash(n)).collect();
+        let noun_hashes: HashSet<u32> = nouns.iter().map(|n| db1_hash(n)).collect();
         
         for &dbnum in &self.dbnums {
             if let Ok(index) = self.load_index(dbnum) {
@@ -549,7 +549,7 @@ impl TreeIndexManager {
         roots: &[RefnoEnum],
         nouns: &[&str],
     ) -> Vec<RefnoEnum> {
-        let noun_hashes: Vec<u32> = nouns.iter().map(|n| db1_hash(n)).collect();
+        let noun_hashes: HashSet<u32> = nouns.iter().map(|n| db1_hash(n)).collect();
         let mut result = Vec::new();
         let mut seen = std::collections::HashSet::new();
 
@@ -605,7 +605,7 @@ impl TreeIndexManager {
     /// 查询指定节点的直接子节点，按 noun 类型过滤
     pub fn query_children_filtered(&self, parent: RefnoEnum, nouns: &[&str]) -> Vec<RefnoEnum> {
         let refno = parent.refno();
-        let noun_hashes: Vec<u32> = nouns.iter().map(|n| db1_hash(n)).collect();
+        let noun_hashes: HashSet<u32> = nouns.iter().map(|n| db1_hash(n)).collect();
         
         for &dbnum in &self.dbnums {
             if let Ok(index) = self.load_index(dbnum) {
@@ -654,7 +654,7 @@ impl TreeIndexManager {
     /// 查询指定节点的祖先节点，按 noun 类型过滤
     pub fn query_ancestors_filtered(&self, node: RefnoEnum, nouns: &[&str]) -> Vec<RefnoEnum> {
         let refno = node.refno();
-        let noun_hashes: Vec<u32> = nouns.iter().map(|n| db1_hash(n)).collect();
+        let noun_hashes: HashSet<u32> = nouns.iter().map(|n| db1_hash(n)).collect();
         
         for &dbnum in &self.dbnums {
             if let Ok(index) = self.load_index(dbnum) {
