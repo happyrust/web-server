@@ -153,3 +153,11 @@ nul
 test_output
 target
 logs
+target-check
+target-run-boolean
+target-run-boolean2
+target-run-boolean3
+
+# SurrealKV 测试数据库文件
+db-data/*.skv
+db-data/version-test.skv/
